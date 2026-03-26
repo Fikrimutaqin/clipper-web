@@ -1,0 +1,864 @@
+<!doctype html>
+<html lang="id">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Clipper - Dashboard</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    :root {
+      --primary: #4f46e5;
+      --primary-hover: #4338ca;
+      --bg: #f3f4f6;
+      --card-bg: #ffffff;
+      --text: #1f2937;
+      --text-muted: #6b7280;
+      --border: #e5e7eb;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: var(--bg);
+      color: var(--text);
+    }
+
+    /* Header */
+    .header {
+      background: var(--card-bg);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .header-logo {
+      font-size: 24px;
+      font-weight: bold;
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    .connections {
+      display: flex;
+      gap: 12px;
+    }
+
+    .badge {
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+    }
+
+    .badge-yt.connected {
+      background-color: #fce8e6;
+      color: #c5221f;
+      border: 1px solid #fad2cf;
+    }
+
+    .badge-yt.disconnected {
+      background-color: #f3f4f6;
+      color: #9ca3af;
+      border: 1px solid #e5e7eb;
+    }
+
+    .badge-tt,
+    .badge-ig {
+      background-color: #f3f4f6;
+      color: #9ca3af;
+      border: 1px solid #e5e7eb;
+      opacity: 0.7;
+    }
+
+    /* Tabs Navigation */
+    .nav-tabs {
+      display: flex;
+      background: var(--card-bg);
+      padding: 0 32px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-tab {
+      padding: 16px 24px;
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      font-weight: 600;
+      color: var(--text-muted);
+      transition: all 0.2s;
+    }
+
+    .nav-tab:hover {
+      color: var(--text);
+    }
+
+    .nav-tab.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+
+    /* Main Content */
+    .container {
+      max-width: 100%;
+      margin: 32px auto;
+      padding: 0 20px;
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .card {
+      background: var(--card-bg);
+      padding: 24px;
+      border-radius: 12px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+      margin-bottom: 24px;
+    }
+
+    h2 {
+      margin-top: 0;
+    }
+
+    /* Form Elements */
+    input[type="text"],
+    input[type="number"],
+    select {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 8px;
+      margin-bottom: 16px;
+      box-sizing: border-box;
+    }
+
+    button,
+    .btn {
+      background-color: var(--primary);
+      color: white;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: background 0.2s;
+      display: inline-block;
+      text-decoration: none;
+      text-align: center;
+    }
+
+    button:hover,
+    .btn:hover {
+      background-color: var(--primary-hover);
+    }
+
+    button:disabled {
+      background-color: #9ca3af;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background-color: #e5e7eb;
+      color: #374151;
+    }
+
+    .btn-secondary:hover {
+      background-color: #d1d5db;
+    }
+
+    /* Video Grid */
+    .video-toolbar {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 24px;
+      align-items: center;
+    }
+
+    .search-box {
+      flex: 1;
+      display: flex;
+      gap: 8px;
+    }
+
+    .search-box input {
+      margin: 0;
+    }
+
+    .video-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+    }
+
+    .video-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    .video-card img {
+      width: 100%;
+      height: 160px;
+      object-fit: cover;
+    }
+
+    .video-duration {
+      position: absolute;
+      top: 130px;
+      right: 8px;
+      background: rgba(0, 0, 0, 0.8);
+      color: white;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    .video-info {
+      padding: 16px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .video-info h3 {
+      margin: 0 0 8px 0;
+      font-size: 16px;
+      font-weight: 600;
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .video-info p {
+      margin: 0 0 16px 0;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .video-info .btn-clip {
+      margin-top: auto;
+      width: 100%;
+    }
+
+    /* Clipper Layout */
+    .clipper-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+
+    @media (max-width: 768px) {
+      .clipper-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Logs / Status */
+    .status-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .status-item {
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .status-item.error {
+      border-left: 4px solid #ef4444;
+    }
+
+    .status-item.success {
+      border-left: 4px solid #10b981;
+    }
+
+    .status-item.processing {
+      border-left: 4px solid #3b82f6;
+    }
+
+    .loader {
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid var(--primary);
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      animation: spin 1s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin {
+      0% {
+        transform: rotate(0deg);
+      }
+
+      100% {
+        transform: rotate(360deg);
+      }
+    }
+
+    /* Modal Download */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .modal-box {
+      background: white;
+      padding: 24px;
+      border-radius: 12px;
+      width: 400px;
+      max-width: 90%;
+      text-align: center;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    }
+
+    .progress-bg {
+      background: #e5e7eb;
+      border-radius: 8px;
+      height: 16px;
+      width: 100%;
+      overflow: hidden;
+      margin: 16px 0;
+    }
+
+    .progress-fill {
+      background: var(--primary);
+      height: 100%;
+      width: 0%;
+      transition: width 0.3s;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Modal Download Progress -->
+  <div id="downloadModal" class="modal-overlay">
+    <div class="modal-box">
+      <h3 style="margin-top:0;"><i class="fa-solid fa-cloud-arrow-down"></i> Mengunduh Video...</h3>
+      <p id="downloadTitle" class="text-muted"
+        style="font-size:13px; margin-bottom:16px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+        Mempersiapkan...</p>
+      <div class="progress-bg">
+        <div id="downloadProgress" class="progress-fill"></div>
+      </div>
+      <p id="downloadStatusText" style="font-weight:bold; font-size:18px;">0%</p>
+      <div id="downloadErrorText" style="color:#ef4444; font-size:13px; margin-top:8px; display:none;"></div>
+      <button id="cancelDownloadBtn" class="btn-secondary" style="margin-top:16px; width:100%;"
+        onclick="closeDownloadModal()">Batal / Tutup</button>
+    </div>
+  </div>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <a href="/" class="header-logo">Clipper</a>
+    </div>
+    <div class="connections">
+      {% if is_connected %}
+      <a href="/auth/google/start" class="badge badge-yt connected" title="Ganti Akun YouTube">
+        <i class="fa-brands fa-youtube"></i> YouTube Connected
+      </a>
+      {% else %}
+      <a href="/auth/google/start" class="badge badge-yt disconnected">
+        <i class="fa-brands fa-youtube"></i> Connect YouTube
+      </a>
+      {% endif %}
+      <span class="badge badge-tt"><i class="fa-brands fa-tiktok"></i> TikTok (Soon)</span>
+      <span class="badge badge-ig"><i class="fa-brands fa-instagram"></i> IG (Soon)</span>
+    </div>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <div class="nav-tabs">
+    <div class="nav-tab active" onclick="switchTab('video')"><i class="fa-solid fa-video"></i> Discovery Video</div>
+    <div class="nav-tab" onclick="switchTab('clipper')"><i class="fa-solid fa-scissors"></i> Clipper Tool</div>
+    <div class="nav-tab" onclick="switchTab('status')"><i class="fa-solid fa-list-check"></i> Status & Jobs</div>
+  </div>
+
+  <div class="container">
+
+    <!-- TAB: VIDEO DISCOVERY -->
+    <div id="tab-video" class="tab-content active">
+      <div class="card">
+        <h2>Atau Download dari URL YouTube</h2>
+        <div style="display:flex; gap:8px;">
+          <input type="text" id="directYtUrl" placeholder="https://youtube.com/watch?v=..." style="margin:0; flex:1;">
+          <button onclick="downloadDirectYt()"><i class="fa-solid fa-cloud-arrow-down"></i> Download ke Server</button>
+        </div>
+        <hr style="border:0; border-top:1px solid var(--border); margin: 32px 0;">
+        <h2>Discovery Video (Indonesia)</h2>
+        <div class="video-toolbar">
+          <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Cari video di YouTube...">
+            <button onclick="searchVideos()"><i class="fa-solid fa-magnifying-glass"></i></button>
+          </div>
+        </div>
+        <div id="videoLoader" style="display: none; text-align: center; padding: 40px;">
+          <div class="loader"></div>
+          <p>Memuat video...</p>
+        </div>
+        <div id="videoGrid" class="video-grid">
+          <!-- Video cards will appear here -->
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: CLIPPER -->
+    <div id="tab-clipper" class="tab-content">
+      <div class="card">
+        <h2>Buat Clip Baru</h2>
+        <p class="text-muted">Pilih sumber video yang akan dipotong.</p>
+
+        <form id="clipForm" class="clipper-grid">
+          <div>
+            <label><strong>1. Sumber Video</strong></label>
+            <div style="margin-top:8px;">
+              <input type="radio" name="source_mode" value="upload" checked onchange="toggleSourceMode()"> Upload File
+              Lokal
+              <label id="labelServer" style="display:none; margin-left:16px; cursor:pointer;">
+                <input type="radio" name="source_mode" value="server" id="radioServer" onchange="toggleSourceMode()">
+                Video Terunduh
+              </label>
+            </div>
+
+            <div id="uploadBox" style="margin-top: 16px;">
+              <label>File Video Lokal (mp4, mov):</label>
+              <input type="file" id="videoFile" name="video" accept="video/*" style="display:block; margin-top:8px;">
+            </div>
+
+            <div id="serverBox"
+              style="display: none; margin-top: 16px; padding: 16px; background: #e6f4ea; border: 1px solid #ceead6; border-radius: 8px;">
+              <p style="color: #137333; margin: 0; font-weight: bold;"><i class="fa-solid fa-circle-check"></i> Video
+                siap dipotong!</p>
+              <p id="serverVideoTitle" style="margin: 4px 0 0 0; font-size: 13px; color: #137333; font-weight: 500;">
+              </p>
+              <input type="hidden" id="serverFilePath" name="server_file" value="">
+            </div>
+
+            <div style="margin-top: 24px;">
+              <label><strong>2. Opsi Rekomendasi AI</strong></label>
+              <p style="font-size:13px; color:#666;">Biarkan AI memilihkan momen terbaik berdasarkan analisis file video
+                lokal yang diupload.</p>
+              <label>Target Durasi AI (detik):</label>
+              <input type="number" id="targetSeconds" value="30" min="5" max="120">
+              <button type="button" class="btn-secondary" onclick="suggestAi()"><i
+                  class="fa-solid fa-wand-magic-sparkles"></i> AI Rekomendasikan Waktu</button>
+              <span id="aiStatus" style="margin-left:12px; font-size:14px; font-weight:bold;"></span>
+            </div>
+          </div>
+
+          <div>
+            <label><strong>3. Pengaturan Potong & Format</strong></label>
+            
+            <div style="margin-top: 12px; margin-bottom: 16px; background: #f3f4f6; padding: 12px; border-radius: 8px;">
+              <label style="display:block; margin-bottom:8px; font-weight:600;">Format Video Output:</label>
+              <input type="radio" name="format_type" value="regular" checked> <i class="fa-solid fa-display"></i> Reguler (Landscape / Asli)
+              <br>
+              <input type="radio" name="format_type" value="short" style="margin-top:8px;"> <i class="fa-solid fa-mobile-screen"></i> YouTube Shorts (Vertikal 9:16)
+            </div>
+
+            <label style="display:block;">Waktu Mulai (detik):</label>
+            <input type="number" id="startSeconds" name="start_seconds" value="0" step="0.1" required>
+
+            <label>Waktu Selesai (detik):</label>
+            <input type="number" id="endSeconds" name="end_seconds" value="10" step="0.1" required>
+
+            <label>Judul Clip:</label>
+            <input type="text" id="clipTitle" name="title" value="My Clip" required>
+
+            <label
+              style="display: flex; align-items: center; gap: 8px; margin-top: 16px; background: #f9fafb; padding: 12px; border-radius: 8px; border: 1px solid #e5e7eb;">
+              <input type="checkbox" id="uploadToYoutube" name="upload_to_youtube" {% if is_connected %}checked{% else
+                %}disabled{% endif %}>
+              <span>Upload otomatis ke YouTube Channel saya setelah selesai</span>
+            </label>
+            {% if not is_connected %}
+            <p style="font-size: 12px; color: #ef4444; margin-top: 4px;">Anda harus Connect YouTube di header untuk
+              fitur upload otomatis.</p>
+            {% endif %}
+
+            <button type="submit" style="width: 100%; margin-top: 24px; padding: 16px; font-size: 16px;"><i
+                class="fa-solid fa-play"></i> Mulai Buat Clip</button>
+            <div id="submitStatus" style="margin-top: 12px; font-weight: bold;"></div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- TAB: STATUS -->
+    <div id="tab-status" class="tab-content">
+      <div class="card">
+        <h2>Status Job & Hasil</h2>
+        <button class="btn-secondary" onclick="refreshJobs()" style="margin-bottom: 20px;"><i
+            class="fa-solid fa-rotate-right"></i> Refresh Status</button>
+        <div id="jobsList" class="status-list">
+          <p class="text-muted">Belum ada job yang aktif saat ini.</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    let activeJobs = [];
+    let pollingInterval = null;
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+
+      const tabBtns = document.querySelectorAll('.nav-tab');
+      if (tabId === 'video') tabBtns[0].classList.add('active');
+      else if (tabId === 'clipper') tabBtns[1].classList.add('active');
+      else if (tabId === 'status') tabBtns[2].classList.add('active');
+
+      document.getElementById('tab-' + tabId).classList.add('active');
+    }
+
+    function toggleSourceMode() {
+      const mode = document.querySelector('input[name="source_mode"]:checked').value;
+      if (mode === 'server') {
+        document.getElementById('serverBox').style.display = 'block';
+        document.getElementById('uploadBox').style.display = 'none';
+      } else {
+        document.getElementById('serverBox').style.display = 'none';
+        document.getElementById('uploadBox').style.display = 'block';
+      }
+    }
+
+    // DISCOVERY VIDEO
+    async function loadTrending() {
+      fetchVideos(`/api/youtube/discover?region=ID&limit=20`);
+    }
+
+    async function searchVideos() {
+      const q = document.getElementById('searchInput').value;
+      if (!q) return;
+      fetchVideos(`/api/youtube/search?q=${encodeURIComponent(q)}&limit=20`);
+    }
+
+    async function fetchVideos(url) {
+      const grid = document.getElementById('videoGrid');
+      const loader = document.getElementById('videoLoader');
+      grid.innerHTML = '';
+      loader.style.display = 'block';
+
+      try {
+        const res = await fetch(url);
+        if (res.status === 401) {
+          alert("Sesi YouTube berakhir atau belum connect. Silakan Connect Ulang.");
+          window.location.href = '/auth/google/start';
+          return;
+        }
+        const data = await res.json();
+        loader.style.display = 'none';
+
+        if (!data.items || data.items.length === 0) {
+          grid.innerHTML = '<p>Tidak ada video ditemukan.</p>';
+          return;
+        }
+
+        data.items.forEach(v => {
+          const card = document.createElement('div');
+          card.className = 'video-card';
+          card.innerHTML = `
+            <img src="${v.thumbnail}" alt="Thumbnail">
+            <div class="video-duration">${v.duration || '0:00'}</div>
+            <div class="video-info">
+              <h3>${v.title}</h3>
+              <p>${v.channel_title}</p>
+              <button class="btn-secondary btn-clip" onclick="useVideo('${v.video_id}', '${v.title.replace(/'/g, "\\'")}')">
+                <i class="fa-solid fa-scissors"></i> Gunakan Video Ini
+              </button>
+            </div>
+          `;
+          grid.appendChild(card);
+        });
+      } catch (err) {
+        loader.style.display = 'none';
+        alert('Gagal memuat video: ' + err.message);
+      }
+    }
+
+    let downloadPollInterval = null;
+
+    async function startDownload(url, title) {
+      document.getElementById('downloadModal').style.display = 'flex';
+      document.getElementById('downloadTitle').innerText = title || url;
+      document.getElementById('downloadProgress').style.width = '0%';
+      document.getElementById('downloadStatusText').innerText = 'Memulai...';
+      document.getElementById('downloadErrorText').style.display = 'none';
+
+      const formData = new FormData();
+      formData.append('youtube_url', url);
+
+      try {
+        const res = await fetch('/api/youtube/download', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Gagal memulai download');
+
+        const taskId = data.task_id;
+        downloadPollInterval = setInterval(() => pollDownload(taskId, title), 1000);
+      } catch (err) {
+        showDownloadError(err.message);
+      }
+    }
+
+    async function pollDownload(taskId, title) {
+      try {
+        const res = await fetch(`/api/youtube/download/${taskId}`);
+        const data = await res.json();
+
+        if (data.status === 'downloading') {
+          const p = data.progress || 0;
+          document.getElementById('downloadProgress').style.width = p + '%';
+          document.getElementById('downloadStatusText').innerText = p.toFixed(1) + '%';
+        } else if (data.status === 'done') {
+          clearInterval(downloadPollInterval);
+          document.getElementById('downloadProgress').style.width = '100%';
+          document.getElementById('downloadStatusText').innerText = 'Selesai!';
+
+          setTimeout(() => {
+            closeDownloadModal();
+            setupServerVideo(data.file_path, title);
+          }, 1000);
+        } else if (data.status === 'error') {
+          clearInterval(downloadPollInterval);
+          showDownloadError(data.error);
+        }
+      } catch (err) {
+        clearInterval(downloadPollInterval);
+        showDownloadError(err.message);
+      }
+    }
+
+    function showDownloadError(msg) {
+      document.getElementById('downloadStatusText').innerText = 'Gagal';
+      const errEl = document.getElementById('downloadErrorText');
+      errEl.style.display = 'block';
+      errEl.innerText = msg;
+    }
+
+    function closeDownloadModal() {
+      document.getElementById('downloadModal').style.display = 'none';
+      if (downloadPollInterval) clearInterval(downloadPollInterval);
+    }
+
+    function setupServerVideo(filePath, title) {
+      switchTab('clipper');
+      document.getElementById('radioServer').style.display = 'inline-block';
+      document.getElementById('labelServer').style.display = 'inline-block';
+      document.getElementById('radioServer').checked = true;
+      toggleSourceMode();
+
+      document.getElementById('serverFilePath').value = filePath;
+      document.getElementById('serverVideoTitle').innerText = title || "Video dari YouTube";
+      document.getElementById('clipTitle').value = `Clip: ${title || 'YouTube'}`;
+    }
+
+    function useVideo(videoId, title) {
+      const url = `https://www.youtube.com/watch?v=${videoId}`;
+      startDownload(url, title);
+    }
+
+    function downloadDirectYt() {
+      const url = document.getElementById('directYtUrl').value;
+      if (!url) return;
+      startDownload(url, "Custom YouTube URL");
+    }
+
+    // CLIPPER AI & SUBMIT
+    async function suggestAi() {
+      const statusEl = document.getElementById("aiStatus");
+      const mode = document.querySelector('input[name="source_mode"]:checked').value;
+      const formData = new FormData();
+      formData.append("target_seconds", document.getElementById("targetSeconds").value);
+
+      if (mode === 'upload') {
+        const videoFile = document.getElementById("videoFile").files[0];
+        if (!videoFile) {
+          alert("Harap pilih file video LOKAL terlebih dahulu!");
+          return;
+        }
+        formData.append("video", videoFile);
+        statusEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> AI sedang menganalisis file lokal...';
+      } else {
+        const serverFile = document.getElementById("serverFilePath").value;
+        if (!serverFile) {
+          alert("Tidak ada video terunduh!");
+          return;
+        }
+        formData.append("server_file", serverFile);
+        statusEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> AI sedang menganalisis video terunduh...';
+      }
+
+      statusEl.style.color = "#3b82f6";
+
+      try {
+        const res = await fetch("/api/suggest", { method: "POST", body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Gagal");
+
+        if (data.candidates && data.candidates.length > 0) {
+          const best = data.candidates[0];
+          const startSec = Number(best.start_seconds || best.start || 0).toFixed(1);
+          const endSec = Number(best.end_seconds || best.end || 0).toFixed(1);
+
+          document.getElementById("startSeconds").value = startSec;
+          document.getElementById("endSeconds").value = endSec;
+          statusEl.style.color = "#10b981";
+          statusEl.innerHTML = `<i class="fa-solid fa-check"></i> Ketemu! (${startSec}s - ${endSec}s)`;
+        } else {
+          statusEl.style.color = "#ef4444";
+          statusEl.innerHTML = "Gagal menemukan momen.";
+        }
+      } catch (err) {
+        statusEl.style.color = "#ef4444";
+        statusEl.innerHTML = "Error AI: " + err.message;
+      }
+    }
+
+    document.getElementById("clipForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const statusEl = document.getElementById("submitStatus");
+      statusEl.style.color = "#3b82f6";
+      statusEl.innerHTML = "Mengupload dan membuat job...";
+
+      const formData = new FormData(e.target);
+
+      const mode = document.querySelector('input[name="source_mode"]:checked').value;
+      if (mode === 'upload') {
+        const file = document.getElementById("videoFile").files[0];
+        if (!file) {
+          statusEl.innerHTML = "";
+          alert("Harap pilih file video LOKAL!");
+          return;
+        }
+      } else {
+        const sFile = document.getElementById("serverFilePath").value;
+        if (!sFile) {
+          statusEl.innerHTML = "";
+          alert("Tidak ada video terunduh yang siap digunakan!");
+          return;
+        }
+      }
+
+      try {
+        const res = await fetch("/api/jobs", { method: "POST", body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Gagal");
+
+        statusEl.style.color = "#10b981";
+        statusEl.innerHTML = "Job berhasil dibuat!";
+
+        activeJobs.push(data.job_id);
+
+        // Pindah ke tab status
+        document.querySelectorAll('.nav-tab')[2].click();
+        refreshJobs();
+
+        if (!pollingInterval) {
+          pollingInterval = setInterval(refreshJobs, 3000);
+        }
+      } catch (err) {
+        statusEl.style.color = "#ef4444";
+        statusEl.innerHTML = "Error: " + err.message;
+      }
+    });
+
+    // STATUS & POLLING
+    async function refreshJobs() {
+      if (activeJobs.length === 0) return;
+
+      const listEl = document.getElementById("jobsList");
+      listEl.innerHTML = "";
+
+      let allDone = true;
+
+      for (const jid of activeJobs) {
+        try {
+          const res = await fetch(`/api/jobs/${jid}`);
+          const job = await res.json();
+
+          const div = document.createElement("div");
+          div.className = `status-item ${job.status === 'error' ? 'error' : (job.status === 'done' ? 'success' : 'processing')}`;
+
+          let html = `<div>
+            <div style="font-weight:bold; margin-bottom:4px;">${job.title || 'Clip Job'}</div>
+            <div style="font-size:13px; color:#666;">Status: <span style="text-transform:uppercase;">${job.status}</span></div>
+          </div>`;
+
+          if (job.status === "error") {
+            html += `<div style="color:#ef4444; font-size:13px; max-width: 400px;">${job.error || 'Unknown error'}</div>`;
+          } else if (job.status === "done") {
+            html += `<div>
+              <a href="/clips/${jid}.mp4" target="_blank" class="btn" style="padding: 8px 12px; font-size:13px;"><i class="fa-solid fa-download"></i> Download</a>
+            </div>`;
+          } else {
+            allDone = false;
+            html += `<div class="loader"></div>`;
+          }
+
+          div.innerHTML = html;
+          listEl.appendChild(div);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      if (allDone && pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+      }
+    }
+
+    // Load trending by default if video tab is active initially
+    window.addEventListener('DOMContentLoaded', () => {
+      loadTrending();
+    });
+  </script>
+</body>
+
+</html>
