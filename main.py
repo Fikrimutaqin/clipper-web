@@ -584,43 +584,121 @@ def _pyav_trim(input_path: Path, output_path: Path, start_seconds: float, end_se
     if float(end_seconds) <= float(start_seconds):
         raise ValueError("end_seconds harus lebih besar dari start_seconds")
 
-    import subprocess
-    
-    # Menggunakan FFmpeg subprocess untuk hasil yang jauh lebih baik daripada PyAV manual loop
-    # FFmpeg bisa menghandle crop (agar tidak ketarik/gepeng), subtitle sederhana, dan audio sync dengan sempurna.
-    
-    cmd = [
-        "ffmpeg", "-y",
-        "-ss", str(start_seconds),
-        "-t", str(end_seconds - start_seconds),
-        "-i", str(input_path)
-    ]
-    
-    # Filter Video
-    # Jika mode 'short', kita crop videonya di tengah (agar tidak gepeng/stretch) dengan rasio 9:16 (misal 1080x1920)
-    # Jika mode 'regular', biarkan aslinya
-    if format_type == "short":
-        # crop=ih*9/16:ih  -> ambil tinggi video aslinya (ih), lalu lebarnya disesuaikan jadi rasio 9:16 dari tingginya
-        # scale=1080:1920 -> paksa ukurannya jadi standar HD vertikal
-        vf = "crop=ih*9/16:ih,scale=1080:1920"
-    else:
-        vf = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2" # Standar HD 16:9
-
-    cmd.extend([
-        "-vf", vf,
-        "-c:v", "libx264",
-        "-preset", "medium",
-        "-crf", "18",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-pix_fmt", "yuv420p",
-        str(output_path)
-    ])
-    
+    in_container = av.open(str(input_path))
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"FFmpeg error: {e.stderr.decode('utf-8', errors='ignore')}")
+        video_stream = next((s for s in in_container.streams if s.type == "video"), None)
+        if not video_stream:
+            raise RuntimeError("Video stream tidak ditemukan")
+        audio_stream = next((s for s in in_container.streams if s.type == "audio"), None)
+
+        out_container = av.open(str(output_path), mode="w")
+        try:
+            rate = 30
+            if video_stream.average_rate is not None:
+                try:
+                    rate = int(float(video_stream.average_rate))
+                except Exception:
+                    rate = 30
+
+            out_video = out_container.add_stream("libx264", rate=rate)
+            orig_w = int(video_stream.codec_context.width or 1920)
+            orig_h = int(video_stream.codec_context.height or 1080)
+            
+            # Setup Filter Graph agar tidak gepeng (stretch) saat convert ke Shorts
+            graph = av.filter.Graph()
+            buffer = graph.add_buffer(template=video_stream)
+            
+            if format_type == "short" and orig_w > orig_h:
+                out_video.width = 1080
+                out_video.height = 1920
+                # Crop bagian tengah sesuai rasio 9:16, lalu scale ke resolusi HD vertikal
+                crop = graph.add("crop", "ih*9/16:ih")
+                scale = graph.add("scale", "1080:1920")
+                buffer.link_to(crop)
+                crop.link_to(scale)
+                scale.link_to(graph.add("buffersink"))
+            else:
+                out_video.width = orig_w
+                out_video.height = orig_h
+                buffer.link_to(graph.add("buffersink"))
+                
+            graph.configure()
+            
+            out_video.pix_fmt = "yuv420p"
+            out_video.options = {"preset": "medium", "crf": "18"}
+
+            out_audio = None
+            if audio_stream is not None:
+                out_audio = out_container.add_stream("aac", rate=int(audio_stream.rate or 44100))
+                out_audio.bit_rate = 192000
+                try:
+                    if hasattr(audio_stream, 'layout') and audio_stream.layout is not None:
+                        out_audio.layout = getattr(audio_stream.layout, 'name', 'stereo')
+                except Exception:
+                    out_audio.layout = 'stereo'
+
+            in_container.seek(int(float(start_seconds) * av.time_base))
+
+            done_video = False
+            done_audio = audio_stream is None
+            streams = [video_stream] + ([audio_stream] if audio_stream is not None else [])
+
+            for packet in in_container.demux(streams):
+                for frame in packet.decode():
+                    t = frame.time
+                    if t is None:
+                        continue
+                    if t < float(start_seconds):
+                        continue
+                    if t > float(end_seconds):
+                        if packet.stream.type == "video":
+                            done_video = True
+                        elif packet.stream.type == "audio":
+                            done_audio = True
+                        continue
+
+                    if packet.stream.type == "video":
+                        graph.push(frame)
+                        while True:
+                            try:
+                                filtered_frame = graph.pull()
+                                for out_packet in out_video.encode(filtered_frame):
+                                    out_container.mux(out_packet)
+                            except av.error.EOFError:
+                                break
+                            except Exception:
+                                break
+                    elif packet.stream.type == "audio" and out_audio is not None:
+                        for out_packet in out_audio.encode(frame):
+                            out_container.mux(out_packet)
+
+                if done_video and done_audio:
+                    break
+
+            # Flush
+            try:
+                graph.push(None)
+                while True:
+                    try:
+                        filtered_frame = graph.pull()
+                        for out_packet in out_video.encode(filtered_frame):
+                            out_container.mux(out_packet)
+                    except av.error.EOFError:
+                        break
+                    except Exception:
+                        break
+            except Exception:
+                pass
+
+            for out_packet in out_video.encode():
+                out_container.mux(out_packet)
+            if out_audio is not None:
+                for out_packet in out_audio.encode():
+                    out_container.mux(out_packet)
+        finally:
+            out_container.close()
+    finally:
+        in_container.close()
 
 
 def _youtube_upload(
