@@ -4,9 +4,21 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Clipper - Pilih Platform</title>
+    <link rel="icon" href="/assets/icon.png?v={{ asset_version }}" type="image/png" />
+    <link rel="apple-touch-icon" href="/assets/icon.png?v={{ asset_version }}" />
     <!-- Tambahkan Font Awesome untuk icon -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
+      :root {
+        --primary: #4f46e5;
+        --primary-hover: #4338ca;
+        --bg: #f3f4f6;
+        --card-bg: #ffffff;
+        --text: #1f2937;
+        --text-muted: #6b7280;
+        --border: #e5e7eb;
+      }
+
       body {
         font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
         margin: 0;
@@ -22,20 +34,23 @@
         text-align: center;
         margin-bottom: 40px;
       }
+
       .header-title h1 {
-        margin: 0;
-        font-size: 32px;
-        color: #111827;
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: var(--primary);
+        text-decoration: none;
       }
+
       .header-title p {
         color: #6b7280;
-        margin-top: 10px;
         font-size: 16px;
       }
       .cards-container {
         display: flex;
         gap: 24px;
-        flex-wrap: wrap;
+        flex-direction: row;
+        flex-wrap: nowrap;
         justify-content: center;
         max-width: 900px;
         width: 100%;
@@ -107,11 +122,30 @@
         font-weight: bold;
         margin-top: 15px;
       }
+
+      .footer {
+        width: 100%;
+        text-align: center;
+        padding: 24px 16px;
+        margin-top: 40px;
+        color: var(--text-muted);
+        font-size: 13px;
+      }
+
+      .footer a {
+        color: var(--primary);
+        text-decoration: none;
+        font-weight: 600;
+      }
+
+      .footer a:hover {
+        text-decoration: underline;
+      }
     </style>
   </head>
   <body>
     <div class="header-title">
-      <h1>Selamat Datang di Clipper</h1>
+      <h1 class="header-logo">ClipFIX</h1>
       <p>Pilih platform tujuan untuk menghubungkan akun Anda</p>
     </div>
     
@@ -145,5 +179,18 @@
         <span class="badge-soon">Segera Hadir</span>
       </a>
     </div>
+
+    <footer class="footer">
+      <div>© <span id="year"></span> ClipFIX — Fix Clip Clipper.</div>
+      <div style="margin-top:8px;">
+        <a href="/dashboard">Dashboard</a>
+        <span style="margin: 0 10px;">•</span>
+        <a href="https://youtube.com" target="_blank" rel="noopener noreferrer">YouTube</a>
+      </div>
+    </footer>
+
+    <script>
+      document.getElementById('year').textContent = new Date().getFullYear();
+    </script>
   </body>
 </html>

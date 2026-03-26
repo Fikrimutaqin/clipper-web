@@ -1,216 +1,61 @@
 import asyncio
-import json
-import os
-import secrets
 import shutil
-import sqlite3
-import time
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 import av
-import numpy as np
-from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
-from google.auth.transport.requests import Request as GoogleAuthRequest
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
+from fastapi.staticfiles import StaticFiles
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
-from itsdangerous import BadSignature, URLSafeSerializer
+from itsdangerous import BadSignature
 from starlette.responses import FileResponse
 from yt_dlp import YoutubeDL
 
-ROOT_DIR = Path(__file__).resolve().parent
-STORAGE_DIR = ROOT_DIR / "storage"
-UPLOADS_DIR = STORAGE_DIR / "uploads"
-DOWNLOADS_DIR = STORAGE_DIR / "downloads"
-CLIPS_DIR = STORAGE_DIR / "clips"
-DB_PATH = STORAGE_DIR / "app.db"
-
-load_dotenv(dotenv_path=ROOT_DIR / ".env")
-
-@dataclass(frozen=True)
-class Settings:
-    secret_key: str
-    google_client_id: str
-    google_client_secret: str
-    google_redirect_uri: str
-
-    @staticmethod
-    def from_env() -> "Settings":
-        secret_key = os.environ.get("CLIPPER_SECRET_KEY", "")
-        google_client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
-        google_client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-        google_redirect_uri = os.environ.get(
-            "GOOGLE_REDIRECT_URI", ""
-        )
-        if not secret_key:
-            secret_key = secrets.token_urlsafe(32)
-        return Settings(
-            secret_key=secret_key,
-            google_client_id=google_client_id,
-            google_client_secret=google_client_secret,
-            google_redirect_uri=google_redirect_uri,
-        )
-
-
-settings = Settings.from_env()
-serializer = URLSafeSerializer(settings.secret_key, salt="clipper-web")
+from core import (
+    CLIPS_DIR,
+    DOWNLOADS_DIR,
+    ROOT_DIR,
+    UPLOADS_DIR,
+    templates,
+)
+from core import ensure_dirs as _ensure_dirs
+from core import get_or_create_sid as _get_or_create_sid
+from core import set_sid_cookie as _set_sid_cookie
+from db import create_job as _create_job
+from db import get_google_token as _get_google_token
+from db import get_job as _get_job
+from db import init_db as _init_db
+from db import list_jobs as _list_jobs
+from db import update_job as _update_job
+from db import upsert_session as _upsert_session
+from google_auth import get_google_creds as _get_google_creds
+from google_auth import google_flow as _google_flow
+from google_auth import new_state, new_state_cookie_payload, read_oauth_state
+from processing import parse_iso8601_duration as _parse_iso8601_duration
+from processing import pyav_trim as _pyav_trim
+from processing import suggest_segments_from_file as _suggest_segments_from_file
 
 app = FastAPI()
-templates = Jinja2Templates(directory=str(ROOT_DIR / "templates"))
-
-
-def _ensure_dirs() -> None:
-    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    CLIPS_DIR.mkdir(parents=True, exist_ok=True)
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def _init_db() -> None:
-    conn = _db()
-    try:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sessions (
-              sid TEXT PRIMARY KEY,
-              google_token_json TEXT,
-              created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS jobs (
-              id TEXT PRIMARY KEY,
-              sid TEXT NOT NULL,
-              status TEXT NOT NULL,
-              error TEXT,
-              source_type TEXT,
-              source_url TEXT,
-              input_path TEXT NOT NULL,
-              output_path TEXT,
-              start_seconds REAL NOT NULL,
-              end_seconds REAL NOT NULL,
-              title TEXT NOT NULL,
-              upload_to_youtube INTEGER NOT NULL,
-              youtube_video_id TEXT,
-              created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL
-            )
-            """
-        )
-        for stmt in (
-            "ALTER TABLE jobs ADD COLUMN source_type TEXT",
-            "ALTER TABLE jobs ADD COLUMN source_url TEXT",
-        ):
-            try:
-                conn.execute(stmt)
-            except sqlite3.OperationalError:
-                pass
-        conn.commit()
-    finally:
-        conn.close()
+app.mount("/assets", StaticFiles(directory=str(ROOT_DIR / "assets")), name="assets")
 
 
 @app.on_event("startup")
 async def _startup() -> None:
+    """FastAPI startup hook to initialize directories and SQLite schema."""
     _ensure_dirs()
     _init_db()
 
 
-def _get_or_create_sid(request: Request) -> str:
-    sid = request.cookies.get("sid")
-    if sid:
-        return sid
-    return str(uuid.uuid4())
-
-
-def _set_sid_cookie(response: Any, sid: str) -> Any:
-    try:
-        response.set_cookie("sid", sid, httponly=True, samesite="lax")
-    except Exception:
-        pass
-    return response
-
-
-def _upsert_session(sid: str, google_token: Optional[dict[str, Any]]) -> None:
-    now = int(time.time())
-    conn = _db()
-    try:
-        conn.execute(
-            """
-            INSERT INTO sessions (sid, google_token_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(sid) DO UPDATE SET
-              google_token_json=excluded.google_token_json,
-              updated_at=excluded.updated_at
-            """,
-            (sid, json.dumps(google_token) if google_token else None, now, now),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _get_google_token(sid: str) -> Optional[dict[str, Any]]:
-    conn = _db()
-    try:
-        row = conn.execute(
-            "SELECT google_token_json FROM sessions WHERE sid = ?", (sid,)
-        ).fetchone()
-        if not row:
-            return None
-        if not row["google_token_json"]:
-            return None
-        return json.loads(row["google_token_json"])
-    finally:
-        conn.close()
-
-
-def _get_google_creds(sid: str) -> Credentials:
-    token_data = _get_google_token(sid)
-    if not token_data:
-        raise RuntimeError("User belum menghubungkan akun Google/YouTube")
-
-    creds = Credentials(
-        token=token_data.get("access_token"),
-        refresh_token=token_data.get("refresh_token"),
-        token_uri=token_data.get("token_uri"),
-        client_id=token_data.get("client_id"),
-        client_secret=token_data.get("client_secret"),
-        scopes=token_data.get("scopes"),
-    )
-
-    if not creds.valid:
-        if creds.expired and creds.refresh_token:
-            creds.refresh(GoogleAuthRequest())
-            token_data["access_token"] = creds.token
-            if creds.refresh_token:
-                token_data["refresh_token"] = creds.refresh_token
-            _upsert_session(sid, token_data)
-        else:
-            raise RuntimeError("Token Google tidak valid, silakan connect ulang")
-
-    return creds
-
-
 def _download_youtube_to_uploads(*, url: str, job_id: str) -> Path:
+    """Download a YouTube URL into uploads folder and return a local media path.
+
+    This is best-effort and may fail with 403 due to YouTube protections.
+    """
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     outtmpl = str(UPLOADS_DIR / f"{job_id}.%(format_id)s.%(ext)s")
     opts: dict[str, Any] = {
@@ -271,6 +116,7 @@ def _download_youtube_to_uploads(*, url: str, job_id: str) -> Path:
                 filepaths.append(candidate)
 
     def pick_stream_path(kind: str) -> Optional[Path]:
+        """Pick the first downloaded file that contains the requested stream kind."""
         for p in filepaths:
             try:
                 c = av.open(str(p))
@@ -333,389 +179,43 @@ def _download_youtube_to_uploads(*, url: str, job_id: str) -> Path:
     raise RuntimeError("Gagal mengunduh video dari YouTube")
 
 
-def _suggest_segments_from_file(
-    *,
-    input_path: Path,
-    target_seconds: float,
-    max_candidates: int = 3,
-    max_scan_seconds: float = 900.0,
-) -> list[dict[str, Any]]:
-    dur = float(target_seconds)
-    if dur <= 0:
-        raise ValueError("target_seconds harus > 0")
-    dur = min(dur, 180.0)
-
-    container = av.open(str(input_path))
-    try:
-        audio_stream = next((s for s in container.streams if s.type == "audio"), None)
-        video_stream = next((s for s in container.streams if s.type == "video"), None)
-        if audio_stream is None and video_stream is None:
-            raise RuntimeError("Tidak ada stream audio/video yang bisa dianalisis")
-
-        if audio_stream is not None:
-            samples: list[tuple[float, float]] = []
-            for frame in container.decode(audio_stream):
-                t = frame.time
-                if t is None:
-                    continue
-                if t > max_scan_seconds:
-                    break
-                # Perbaikan error 'av.audio.layout.AudioLayout' untuk versi PyAV baru
-                try:
-                    arr = frame.to_ndarray()
-                except AttributeError:
-                    arr = frame.to_ndarray(format="s16")
-                
-                if arr.ndim == 2:
-                    arr = arr.mean(axis=0)
-                arr = arr.astype(np.float32, copy=False)
-                if arr.size == 0:
-                    continue
-                rms = float(np.sqrt(np.mean(arr * arr)))
-                samples.append((float(t), rms))
-
-            if not samples:
-                raise RuntimeError("Gagal membaca audio untuk analisis")
-
-            times = np.array([t for t, _ in samples], dtype=np.float32)
-            energies = np.array([e for _, e in samples], dtype=np.float32)
-
-            order = np.argsort(times)
-            times = times[order]
-            energies = energies[order]
-
-            if energies.size < 5:
-                peak_indices = np.array([int(np.argmax(energies))], dtype=np.int32)
-            else:
-                p = float(np.percentile(energies, 90))
-                peak_indices = np.where(energies >= p)[0]
-                if peak_indices.size == 0:
-                    peak_indices = np.array([int(np.argmax(energies))], dtype=np.int32)
-
-            candidates: list[dict[str, Any]] = []
-            for idx in peak_indices.tolist():
-                t = float(times[idx])
-                start = max(0.0, t - dur * 0.25)
-                end = start + dur
-                score = float(energies[idx])
-                candidates.append({"start_seconds": start, "end_seconds": end, "score": score})
-
-            candidates.sort(key=lambda c: c["score"], reverse=True)
-            picked: list[dict[str, Any]] = []
-            for c in candidates:
-                if len(picked) >= int(max_candidates):
-                    break
-                ok = True
-                for p2 in picked:
-                    if abs(float(p2["start_seconds"]) - float(c["start_seconds"])) < dur * 0.5:
-                        ok = False
-                        break
-                if ok:
-                    picked.append(c)
-            if picked:
-                return picked
-
-        if video_stream is not None:
-            container.seek(0)
-            diffs: list[tuple[float, float]] = []
-            prev = None
-            frame_step = max(1, int(float(video_stream.average_rate or 30) // 2))
-            i = 0
-            for frame in container.decode(video_stream):
-                t = frame.time
-                if t is None:
-                    continue
-                if t > max_scan_seconds:
-                    break
-                i += 1
-                if i % frame_step != 0:
-                    continue
-                arr = frame.to_ndarray(format="gray")
-                arr = arr[::8, ::8].astype(np.float32, copy=False)
-                if prev is not None:
-                    diff = float(np.mean(np.abs(arr - prev)))
-                    diffs.append((float(t), diff))
-                prev = arr
-
-            if not diffs:
-                raise RuntimeError("Gagal membaca video untuk analisis")
-
-            times = np.array([t for t, _ in diffs], dtype=np.float32)
-            scores = np.array([d for _, d in diffs], dtype=np.float32)
-            best = int(np.argmax(scores))
-            t = float(times[best])
-            start = max(0.0, t - dur * 0.25)
-            end = start + dur
-            return [{"start_seconds": start, "end_seconds": end, "score": float(scores[best])}]
-
-        raise RuntimeError("Tidak ada stream yang bisa dianalisis")
-    finally:
-        container.close()
-
-
-def _create_job(
-    sid: str,
-    input_path: str,
-    start_seconds: float,
-    end_seconds: float,
-    title: str,
-    upload_to_youtube: bool,
-    source_type: Optional[str] = None,
-    source_url: Optional[str] = None,
-    format_type: str = "regular",
-) -> str:
-    job_id = str(uuid.uuid4())
-    now = int(time.time())
-    conn = _db()
-    try:
-        # Tambahkan kolom format_type secara dinamis jika belum ada (SQLite hack sederhana untuk migrasi)
-        try:
-            conn.execute("ALTER TABLE jobs ADD COLUMN format_type TEXT DEFAULT 'regular'")
-        except Exception:
-            pass
-
-        conn.execute(
-            """
-            INSERT INTO jobs (
-              id, sid, status, error, source_type, source_url, input_path, output_path,
-              start_seconds, end_seconds, title, upload_to_youtube,
-              youtube_video_id, format_type, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                job_id,
-                sid,
-                "queued",
-                None,
-                source_type,
-                source_url,
-                input_path,
-                None,
-                float(start_seconds),
-                float(end_seconds),
-                title,
-                1 if upload_to_youtube else 0,
-                None,
-                format_type,
-                now,
-                now,
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    return job_id
-
-
-def _update_job(
-    job_id: str,
-    *,
-    status: Optional[str] = None,
-    error: Optional[str] = None,
-    input_path: Optional[str] = None,
-    source_type: Optional[str] = None,
-    source_url: Optional[str] = None,
-    output_path: Optional[str] = None,
-    youtube_video_id: Optional[str] = None,
-) -> None:
-    updates: list[str] = []
-    params: list[Any] = []
-    if status is not None:
-        updates.append("status = ?")
-        params.append(status)
-    if error is not None:
-        updates.append("error = ?")
-        params.append(error)
-    if input_path is not None:
-        updates.append("input_path = ?")
-        params.append(input_path)
-    if source_type is not None:
-        updates.append("source_type = ?")
-        params.append(source_type)
-    if source_url is not None:
-        updates.append("source_url = ?")
-        params.append(source_url)
-    if output_path is not None:
-        updates.append("output_path = ?")
-        params.append(output_path)
-    if youtube_video_id is not None:
-        updates.append("youtube_video_id = ?")
-        params.append(youtube_video_id)
-    updates.append("updated_at = ?")
-    params.append(int(time.time()))
-    params.append(job_id)
-    conn = _db()
-    try:
-        conn.execute(
-            f"UPDATE jobs SET {', '.join(updates)} WHERE id = ?",
-            tuple(params),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _get_job(job_id: str, sid: str) -> Optional[dict[str, Any]]:
-    conn = _db()
-    try:
-        row = conn.execute(
-            "SELECT * FROM jobs WHERE id = ? AND sid = ?", (job_id, sid)
-        ).fetchone()
-        if not row:
-            return None
-        return dict(row)
-    finally:
-        conn.close()
-
-
-def _list_jobs(sid: str, limit: int = 20) -> list[dict[str, Any]]:
-    conn = _db()
-    try:
-        rows = conn.execute(
-            "SELECT * FROM jobs WHERE sid = ? ORDER BY created_at DESC LIMIT ?",
-            (sid, limit),
-        ).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
-
-
-def _pyav_trim(input_path: Path, output_path: Path, start_seconds: float, end_seconds: float, format_type: str = "regular") -> None:
-    if float(end_seconds) <= float(start_seconds):
-        raise ValueError("end_seconds harus lebih besar dari start_seconds")
-
-    in_container = av.open(str(input_path))
-    try:
-        video_stream = next((s for s in in_container.streams if s.type == "video"), None)
-        if not video_stream:
-            raise RuntimeError("Video stream tidak ditemukan")
-        audio_stream = next((s for s in in_container.streams if s.type == "audio"), None)
-
-        out_container = av.open(str(output_path), mode="w")
-        try:
-            rate = 30
-            if video_stream.average_rate is not None:
-                try:
-                    rate = int(float(video_stream.average_rate))
-                except Exception:
-                    rate = 30
-
-            out_video = out_container.add_stream("libx264", rate=rate)
-            orig_w = int(video_stream.codec_context.width or 1920)
-            orig_h = int(video_stream.codec_context.height or 1080)
-            
-            # Setup Filter Graph agar tidak gepeng (stretch) saat convert ke Shorts
-            graph = av.filter.Graph()
-            buffer = graph.add_buffer(template=video_stream)
-            
-            if format_type == "short" and orig_w > orig_h:
-                out_video.width = 1080
-                out_video.height = 1920
-                # Crop bagian tengah sesuai rasio 9:16, lalu scale ke resolusi HD vertikal
-                crop = graph.add("crop", "ih*9/16:ih")
-                scale = graph.add("scale", "1080:1920")
-                buffer.link_to(crop)
-                crop.link_to(scale)
-                scale.link_to(graph.add("buffersink"))
-            else:
-                out_video.width = orig_w
-                out_video.height = orig_h
-                buffer.link_to(graph.add("buffersink"))
-                
-            graph.configure()
-            
-            out_video.pix_fmt = "yuv420p"
-            out_video.options = {"preset": "medium", "crf": "18"}
-
-            out_audio = None
-            if audio_stream is not None:
-                out_audio = out_container.add_stream("aac", rate=int(audio_stream.rate or 44100))
-                out_audio.bit_rate = 192000
-                try:
-                    if hasattr(audio_stream, 'layout') and audio_stream.layout is not None:
-                        out_audio.layout = getattr(audio_stream.layout, 'name', 'stereo')
-                except Exception:
-                    out_audio.layout = 'stereo'
-
-            in_container.seek(int(float(start_seconds) * av.time_base))
-
-            done_video = False
-            done_audio = audio_stream is None
-            streams = [video_stream] + ([audio_stream] if audio_stream is not None else [])
-
-            for packet in in_container.demux(streams):
-                for frame in packet.decode():
-                    t = frame.time
-                    if t is None:
-                        continue
-                    if t < float(start_seconds):
-                        continue
-                    if t > float(end_seconds):
-                        if packet.stream.type == "video":
-                            done_video = True
-                        elif packet.stream.type == "audio":
-                            done_audio = True
-                        continue
-
-                    if packet.stream.type == "video":
-                        graph.push(frame)
-                        while True:
-                            try:
-                                filtered_frame = graph.pull()
-                                for out_packet in out_video.encode(filtered_frame):
-                                    out_container.mux(out_packet)
-                            except av.error.EOFError:
-                                break
-                            except Exception:
-                                break
-                    elif packet.stream.type == "audio" and out_audio is not None:
-                        for out_packet in out_audio.encode(frame):
-                            out_container.mux(out_packet)
-
-                if done_video and done_audio:
-                    break
-
-            # Flush
-            try:
-                graph.push(None)
-                while True:
-                    try:
-                        filtered_frame = graph.pull()
-                        for out_packet in out_video.encode(filtered_frame):
-                            out_container.mux(out_packet)
-                    except av.error.EOFError:
-                        break
-                    except Exception:
-                        break
-            except Exception:
-                pass
-
-            for out_packet in out_video.encode():
-                out_container.mux(out_packet)
-            if out_audio is not None:
-                for out_packet in out_audio.encode():
-                    out_container.mux(out_packet)
-        finally:
-            out_container.close()
-    finally:
-        in_container.close()
-
-
 def _youtube_upload(
     *,
     sid: str,
     file_path: Path,
     title: str,
+    description: str = "",
+    format_type: str = "regular",
 ) -> str:
+    """Upload an MP4 file to YouTube for the given session and return video id."""
+    def build_metadata(raw_title: str, raw_description: str, fmt: str) -> tuple[str, str]:
+        """Build a YouTube-safe title/description pair (handles length limits)."""
+        base_title = (raw_title or "").strip()
+        if not base_title:
+            base_title = "Clipper Video"
+
+        is_short = (fmt or "").strip().lower() == "short"
+        suffix = ""
+        max_len = 100
+        if len(base_title) + len(suffix) > max_len:
+            base_title = base_title[: max_len - len(suffix)].rstrip()
+            if not base_title:
+                base_title = "Clipper"
+        final_title = f"{base_title}{suffix}"
+
+        desc = (raw_description or "").strip()
+        if not desc:
+            desc = "Generated by Clipper.\n\n#Clipper"
+        if len(desc) > 5000:
+            desc = desc[:5000]
+
+        return final_title, desc
+
     creds = _get_google_creds(sid)
     youtube = build("youtube", "v3", credentials=creds)
     media = MediaFileUpload(str(file_path), mimetype="video/mp4", resumable=True)
-    
-    # Menambahkan hashtag Shorts ke title/deskripsi jika belum ada
-    # YouTube secara otomatis mendeteksi Shorts jika durasi < 60s dan rasio vertikal/persegi,
-    # namun menambahkan hashtag #Shorts membantu algoritmanya.
-    final_title = title if "#Shorts" in title else f"{title} #Shorts"
-    description = f"Clip dari video trending.\n\n#Shorts #Trending #Clipper"
+
+    final_title, description = build_metadata(title, description, format_type)
 
     response = (
         youtube.videos()
@@ -736,6 +236,7 @@ def _youtube_upload(
 
 
 async def _process_job(job_id: str, sid: str) -> None:
+    """Run the background job lifecycle: trim -> optional upload -> update status."""
     job = _get_job(job_id, sid)
     if not job:
         return
@@ -763,7 +264,12 @@ async def _process_job(job_id: str, sid: str) -> None:
         if int(job["upload_to_youtube"]) == 1:
             _update_job(job_id, status="uploading")
             video_id = await asyncio.to_thread(
-                _youtube_upload, sid=sid, file_path=output_path, title=str(job["title"])
+                _youtube_upload,
+                sid=sid,
+                file_path=output_path,
+                title=str(job["title"]),
+                description=str(job.get("description") or ""),
+                format_type=format_type,
             )
             _update_job(job_id, status="done", youtube_video_id=video_id)
         else:
@@ -778,49 +284,45 @@ async def _process_job(job_id: str, sid: str) -> None:
         _update_job(job_id, status="error", error=msg)
 
 
-def _google_flow(*, state: str, redirect_uri: str) -> Flow:
-    if not settings.google_client_id or not settings.google_client_secret:
-        raise HTTPException(
-            status_code=500, detail="GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET belum diset"
-        )
-    redirect_uris = [redirect_uri]
-    if settings.google_redirect_uri and settings.google_redirect_uri not in redirect_uris:
-        redirect_uris.append(settings.google_redirect_uri)
-    return Flow.from_client_config(
-        {
-            "web": {
-                "client_id": settings.google_client_id,
-                "client_secret": settings.google_client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": redirect_uris,
-            }
-        },
-        scopes=[
-            "openid",
-            "https://www.googleapis.com/auth/userinfo.email",
-            "https://www.googleapis.com/auth/youtube.upload",
-            "https://www.googleapis.com/auth/youtube.readonly",
-        ],
-        state=state,
-    )
-
-
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request) -> HTMLResponse:
+    """Render landing page (platform selection) and ensure a session cookie exists."""
     sid = _get_or_create_sid(request)
-    response = templates.TemplateResponse("index.html", {"request": request})
+    token = _get_google_token(sid)
+    if token:
+        response = RedirectResponse(url="/dashboard")
+        return _set_sid_cookie(response, sid)
+    try:
+        asset_version = int((ROOT_DIR / "assets" / "icon.png").stat().st_mtime)
+    except Exception:
+        asset_version = 1
+    response = templates.TemplateResponse(
+        "index.html", {"request": request, "asset_version": asset_version}
+    )
     return _set_sid_cookie(response, sid)
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request) -> HTMLResponse:
+    """Render the main dashboard UI."""
     sid = _get_or_create_sid(request)
     token = _get_google_token(sid)
+    if not token:
+        response = RedirectResponse(url="/")
+        return _set_sid_cookie(response, sid)
     jobs = _list_jobs(sid)
+    try:
+        asset_version = int((ROOT_DIR / "assets" / "icon.png").stat().st_mtime)
+    except Exception:
+        asset_version = 1
     response = templates.TemplateResponse(
         "dashboard.html",
-        {"request": request, "is_connected": bool(token), "jobs": jobs},
+        {
+            "request": request,
+            "is_connected": bool(token),
+            "jobs": jobs,
+            "asset_version": asset_version,
+        },
     )
     response.set_cookie("sid", sid, httponly=True, samesite="lax")
     return response
@@ -828,8 +330,9 @@ async def dashboard(request: Request) -> HTMLResponse:
 
 @app.get("/auth/google/start")
 async def google_start(request: Request) -> RedirectResponse:
+    """Start Google OAuth flow and set state cookies."""
     sid = _get_or_create_sid(request)
-    state = secrets.token_urlsafe(16)
+    state = new_state()
     redirect_uri = str(request.url_for("google_callback"))
     flow = _google_flow(state=state, redirect_uri=redirect_uri)
     flow.redirect_uri = redirect_uri
@@ -840,20 +343,15 @@ async def google_start(request: Request) -> RedirectResponse:
     )
     response = RedirectResponse(url=authorization_url)
     response.set_cookie("sid", sid, httponly=True, samesite="lax")
-    response.set_cookie(
-        "oauth_state", serializer.dumps({"state": state}), httponly=True, samesite="lax"
-    )
+    response.set_cookie("oauth_state", new_state_cookie_payload(state), httponly=True, samesite="lax")
     return response
 
 
 @app.get("/auth/google/callback")
 async def google_callback(request: Request, code: str = "", state: str = "") -> RedirectResponse:
+    """Handle OAuth callback, exchange code for tokens, and persist session tokens."""
     sid = _get_or_create_sid(request)
-    raw_state = request.cookies.get("oauth_state", "")
-    try:
-        payload = serializer.loads(raw_state) if raw_state else {}
-    except BadSignature:
-        payload = {}
+    payload = read_oauth_state(request)
     expected_state = payload.get("state")
     if not expected_state or not state or state != expected_state:
         raise HTTPException(status_code=400, detail="State OAuth tidak valid")
@@ -880,8 +378,19 @@ async def google_callback(request: Request, code: str = "", state: str = "") -> 
     return response
 
 
+@app.get("/auth/logout")
+async def logout(request: Request) -> RedirectResponse:
+    """Disconnect the current Google/YouTube session for this sid."""
+    sid = _get_or_create_sid(request)
+    _upsert_session(sid, None)
+    response = RedirectResponse(url="/")
+    response.delete_cookie("oauth_state")
+    return _set_sid_cookie(response, sid)
+
+
 @app.get("/api/me")
 async def api_me(request: Request) -> JSONResponse:
+    """Return session info and connection status for the current user."""
     sid = _get_or_create_sid(request)
     token = _get_google_token(sid)
     return _set_sid_cookie(JSONResponse({"sid": sid, "is_connected": bool(token)}), sid)
@@ -889,6 +398,7 @@ async def api_me(request: Request) -> JSONResponse:
 
 @app.get("/api/youtube/videos")
 async def api_youtube_videos(request: Request, limit: int = 25) -> JSONResponse:
+    """List videos from the authenticated user's uploads playlist."""
     sid = _get_or_create_sid(request)
     required_scope = "https://www.googleapis.com/auth/youtube.readonly"
     token_data = _get_google_token(sid)
@@ -952,39 +462,13 @@ async def api_youtube_videos(request: Request, limit: int = 25) -> JSONResponse:
     except Exception:
         raise HTTPException(status_code=500, detail="Gagal memuat video dari YouTube")
 
-
-def _parse_iso8601_duration(duration: str) -> str:
-    if not duration:
-        return "0:00"
-    import re
-    match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration)
-    if not match:
-        return "0:00"
-    h, m, s = match.groups()
-    h = int(h) if h else 0
-    m = int(m) if m else 0
-    s = int(s) if s else 0
-    if h > 0:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m}:{s:02d}"
-
-def _topic_to_query(topic: str) -> str:
-    t = (topic or "").strip().lower()
-    if t in ("finance", "financing"):
-        return "finance investing money"
-    if t in ("trading",):
-        return "trading forex crypto stocks"
-    if t in ("ai", "podcast ai", "ai podcast"):
-        return "AI podcast"
-    return t or "finance trading AI podcast"
-
-
 @app.get("/api/youtube/discover")
 async def api_youtube_discover(
     request: Request,
     limit: int = 20,
     region: str = "ID",
 ) -> JSONResponse:
+    """Discover YouTube videos for Indonesia (current strategy: podcast-focused search)."""
     sid = _get_or_create_sid(request)
     required_scope = "https://www.googleapis.com/auth/youtube.readonly"
     token_data = _get_google_token(sid)
@@ -1084,10 +568,12 @@ async def api_youtube_discover(
 DOWNLOAD_TASKS: dict[str, dict[str, Any]] = {}
 
 def _download_youtube_task(task_id: str, url: str):
+    """Background download task that writes progress into DOWNLOAD_TASKS."""
     import re
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
     def progress_hook(d):
+        """yt-dlp progress hook to update task progress percentage."""
         if d['status'] == 'downloading':
             p_str = d.get('_percent_str', '0%')
             p_str = ansi_escape.sub('', p_str).replace('%', '').strip()
@@ -1099,7 +585,7 @@ def _download_youtube_task(task_id: str, url: str):
             DOWNLOAD_TASKS[task_id]['progress'] = 100
 
     ydl_opts = {
-        "format": "best[ext=mp4]/best",
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "outtmpl": str(DOWNLOADS_DIR / f"dl_{task_id}_%(id)s.%(ext)s"),
         "progress_hooks": [progress_hook],
         "quiet": True,
@@ -1121,7 +607,48 @@ def _download_youtube_task(task_id: str, url: str):
         import yt_dlp
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            filepath = ydl.prepare_filename(info)
+            filepaths: list[Path] = []
+            reqs = info.get("requested_downloads") if isinstance(info, dict) else None
+            if isinstance(reqs, list):
+                for r in reqs:
+                    fp = (r or {}).get("filepath")
+                    if fp:
+                        filepaths.append(Path(fp))
+            if not filepaths:
+                filepath = ydl.prepare_filename(info)
+                filepaths.append(Path(filepath))
+
+            filepath = filepaths[0]
+            if len(filepaths) >= 2:
+                v_path = filepaths[0]
+                a_path = filepaths[1]
+                merged_path = DOWNLOADS_DIR / f"dl_{task_id}_merged.mp4"
+                v_in = av.open(str(v_path))
+                a_in = av.open(str(a_path))
+                out = av.open(str(merged_path), mode="w")
+                try:
+                    v_stream = next((s for s in v_in.streams if s.type == "video"), None)
+                    a_stream = next((s for s in a_in.streams if s.type == "audio"), None)
+                    if v_stream is None:
+                        raise RuntimeError("Video stream tidak ditemukan saat merge download")
+                    out_v = out.add_stream(template=v_stream)
+                    out_a = out.add_stream(template=a_stream) if a_stream is not None else None
+                    for packet in v_in.demux(v_stream):
+                        if packet.dts is None:
+                            continue
+                        packet.stream = out_v
+                        out.mux(packet)
+                    if a_stream is not None and out_a is not None:
+                        for packet in a_in.demux(a_stream):
+                            if packet.dts is None:
+                                continue
+                            packet.stream = out_a
+                            out.mux(packet)
+                finally:
+                    out.close()
+                    v_in.close()
+                    a_in.close()
+                filepath = merged_path
             DOWNLOAD_TASKS[task_id]['status'] = 'done'
             DOWNLOAD_TASKS[task_id]['file_path'] = str(filepath)
     except Exception as e:
@@ -1130,6 +657,7 @@ def _download_youtube_task(task_id: str, url: str):
 
 @app.post("/api/youtube/download")
 async def api_youtube_download(request: Request, youtube_url: str = Form(...)) -> JSONResponse:
+    """Create a download task for a YouTube URL and return a task id."""
     sid = _get_or_create_sid(request)
     task_id = str(uuid.uuid4())
     DOWNLOAD_TASKS[task_id] = {"status": "downloading", "progress": 0, "file_path": "", "error": ""}
@@ -1138,6 +666,7 @@ async def api_youtube_download(request: Request, youtube_url: str = Form(...)) -
 
 @app.get("/api/youtube/download/{task_id}")
 async def api_youtube_download_status(request: Request, task_id: str) -> JSONResponse:
+    """Return the current status/progress for a given download task id."""
     if task_id not in DOWNLOAD_TASKS:
         raise HTTPException(status_code=404, detail="Task tidak ditemukan")
     return JSONResponse(DOWNLOAD_TASKS[task_id])
@@ -1148,6 +677,7 @@ async def api_youtube_search(
     q: str = "",
     limit: int = 15,
 ) -> JSONResponse:
+    """Search YouTube videos by keyword for the authenticated user."""
     sid = _get_or_create_sid(request)
     required_scope = "https://www.googleapis.com/auth/youtube.readonly"
     token_data = _get_google_token(sid)
@@ -1238,6 +768,7 @@ async def api_suggest(
     server_file: str = Form(""),
     target_seconds: float = Form(30.0),
 ) -> JSONResponse:
+    """Return suggested clip timestamps for an uploaded file or a server-downloaded file."""
     sid = _get_or_create_sid(request)
     
     tmp_path: Optional[Path] = None
@@ -1269,9 +800,11 @@ async def api_create_job(
     start_seconds: float = Form(...),
     end_seconds: float = Form(...),
     title: str = Form("Clipper video"),
+    description: str = Form(""),
     upload_to_youtube: bool = Form(False),
     format_type: str = Form("regular"),
 ) -> JSONResponse:
+    """Create a new clipping job and start background processing."""
     sid = _get_or_create_sid(request)
     youtube_url = (youtube_url or "").strip()
     
@@ -1290,6 +823,7 @@ async def api_create_job(
         start_seconds=start_seconds,
         end_seconds=end_seconds,
         title=title,
+        description=description,
         upload_to_youtube=bool(upload_to_youtube),
         source_type="youtube" if youtube_url or server_file else "upload",
         source_url=youtube_url or None,
@@ -1299,9 +833,9 @@ async def api_create_job(
     asyncio.create_task(_process_job(job_id, sid))
     return _set_sid_cookie(JSONResponse({"job_id": job_id}), sid)
 
-
 @app.get("/api/jobs/{job_id}")
 async def api_get_job(request: Request, job_id: str) -> JSONResponse:
+    """Return job status and download link (if available)."""
     sid = _get_or_create_sid(request)
     job = _get_job(job_id, sid)
     if not job:
@@ -1321,9 +855,9 @@ async def api_get_job(request: Request, job_id: str) -> JSONResponse:
         sid,
     )
 
-
 @app.get("/clips/{job_id}.mp4")
 async def clips(job_id: str, request: Request) -> FileResponse:
+    """Serve a generated clip file for the current session."""
     sid = _get_or_create_sid(request)
     job = _get_job(job_id, sid)
     if not job:

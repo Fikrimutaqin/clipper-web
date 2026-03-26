@@ -5,6 +5,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Clipper - Dashboard</title>
+  <link rel="icon" href="/assets/icon.png?v={{ asset_version }}" type="image/png" />
+  <link rel="apple-touch-icon" href="/assets/icon.png?v={{ asset_version }}" />
+
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
     :root {
@@ -54,6 +57,7 @@
     .connections {
       display: flex;
       gap: 12px;
+      align-items: center;
     }
 
     .badge {
@@ -79,6 +83,63 @@
       border: 1px solid #e5e7eb;
     }
 
+    .platform-select {
+      padding: 8px 44px 8px 16px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--card-bg);
+      font-weight: 700;
+      color: var(--text);
+      cursor: pointer;
+      min-width: 220px;
+      text-align: center;
+      text-align-last: center;
+    }
+
+    .platform-select:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+    }
+
+    .platform-hint {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-left: 10px;
+      font-weight: 700;
+    }
+
+    .logout-btn {
+      padding: 0px 12px;
+      border-radius: 999px;
+      height: 36px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      white-space: nowrap;
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .footer {
+      width: 100%;
+      text-align: center;
+      margin: 40px 0 0 0;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .footer a {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .footer a:hover {
+      text-decoration: underline;
+    }
+
     .badge-tt,
     .badge-ig {
       background-color: #f3f4f6;
@@ -87,30 +148,93 @@
       opacity: 0.7;
     }
 
-    /* Tabs Navigation */
-    .nav-tabs {
-      display: flex;
+    /* Stepper */
+    .stepper {
       background: var(--card-bg);
-      padding: 0 32px;
       border-bottom: 1px solid var(--border);
+      padding: 14px 32px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      position: sticky;
+      top: 100px;
+      z-index: 90;
     }
 
-    .nav-tab {
-      padding: 16px 24px;
-      cursor: pointer;
-      border-bottom: 3px solid transparent;
-      font-weight: 600;
+    @media (max-width: 640px) {
+      .header {
+        flex-direction: column;
+        padding-bottom: 0px;
+      }
+
+      .download-box {
+        flex-direction: column;
+        gap: 5px;
+      }
+
+      .stepper {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 5px;
+        padding: 12px 16px;
+        top: 0px;
+        position: relative;
+      }
+
+      .step-line {
+        width: 2px;
+        height: 14px;
+        min-width: 0;
+        background: var(--border);
+        margin-left: 13px;
+      }
+    }
+
+    .step {
+      display: flex;
+      align-items: center;
+      gap: 10px;
       color: var(--text-muted);
-      transition: all 0.2s;
+      cursor: pointer;
+      user-select: none;
     }
 
-    .nav-tab:hover {
-      color: var(--text);
+    .step-dot {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      border: 2px solid var(--border);
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      font-size: 13px;
+      background: white;
+      color: var(--text-muted);
     }
 
-    .nav-tab.active {
+    .step-label {
+      font-weight: 700;
+    }
+
+    .step.active .step-dot {
+      border-color: var(--primary);
       color: var(--primary);
-      border-bottom-color: var(--primary);
+    }
+
+    .step.done .step-dot {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: white;
+    }
+
+    .step-line {
+      flex: 1;
+      min-width: 30px;
+      height: 2px;
+      background: var(--border);
+      border-radius: 999px;
+      opacity: 0.9;
     }
 
     /* Main Content */
@@ -120,12 +244,12 @@
       padding: 0 20px;
     }
 
-    .tab-content {
-      display: none;
+    .section-anchor {
+      scroll-margin-top: 140px;
     }
 
-    .tab-content.active {
-      display: block;
+    .step-hidden {
+      display: none;
     }
 
     .card {
@@ -143,13 +267,14 @@
     /* Form Elements */
     input[type="text"],
     input[type="number"],
+    textarea,
     select {
       width: 100%;
       padding: 12px;
       border: 1px solid var(--border);
       border-radius: 8px;
-      margin-top: 8px;
-      margin-bottom: 16px;
+      margin-top: 0px;
+      margin-bottom: 0px;
       box-sizing: border-box;
     }
 
@@ -368,6 +493,10 @@
       width: 0%;
       transition: width 0.3s;
     }
+    .download-box {
+      display: flex;
+      gap: 8px;
+    }
   </style>
 </head>
 
@@ -393,65 +522,83 @@
   <!-- Header -->
   <header class="header">
     <div class="header-left">
-      <a href="/" class="header-logo">Clipper</a>
+      <a href="/" class="header-logo">ClipFIX</a>
     </div>
     <div class="connections">
+      <select id="platformSelect" class="platform-select" data-is-connected="{% if is_connected %}1{% else %}0{% endif %}" onchange="onPlatformChange(this.value)">
+        {% if is_connected %}
+          <option value="youtube" selected>YouTube (Connected)</option>
+          <option value="tiktok" disabled>TikTok (Soon)</option>
+          <option value="instagram" disabled>Instagram (Soon)</option>
+        {% else %}
+          <option value="" selected disabled>Pilih Platform</option>
+          <option value="youtube">YouTube (Connect)</option>
+          <option value="tiktok" disabled>TikTok (Soon)</option>
+          <option value="instagram" disabled>Instagram (Soon)</option>
+        {% endif %}
+      </select>
       {% if is_connected %}
-      <a href="/auth/google/start" class="badge badge-yt connected" title="Ganti Akun YouTube">
-        <i class="fa-brands fa-youtube"></i> YouTube Connected
-      </a>
-      {% else %}
-      <a href="/auth/google/start" class="badge badge-yt disconnected">
-        <i class="fa-brands fa-youtube"></i> Connect YouTube
-      </a>
+        <a href="/auth/logout" class="btn-secondary logout-btn"><i class="fa-solid fa-right-from-bracket"></i> Logout</a>
       {% endif %}
-      <span class="badge badge-tt"><i class="fa-brands fa-tiktok"></i> TikTok (Soon)</span>
-      <span class="badge badge-ig"><i class="fa-brands fa-instagram"></i> IG (Soon)</span>
     </div>
   </header>
 
-  <!-- Navigation Tabs -->
-  <div class="nav-tabs">
-    <div class="nav-tab active" onclick="switchTab('video')"><i class="fa-solid fa-video"></i> Discovery Video</div>
-    <div class="nav-tab" onclick="switchTab('clipper')"><i class="fa-solid fa-scissors"></i> Clipper Tool</div>
-    <div class="nav-tab" onclick="switchTab('status')"><i class="fa-solid fa-list-check"></i> Status & Jobs</div>
+  <div class="stepper" id="stepper">
+    <div class="step active" id="step-discovery" onclick="goToStep('discovery')">
+      <div class="step-dot" id="dot-discovery">1</div>
+      <div class="step-label"><i class="fa-solid fa-video"></i> Discovery</div>
+    </div>
+    <div class="step-line"></div>
+    <div class="step" id="step-clipper" onclick="goToStep('clipper')">
+      <div class="step-dot" id="dot-clipper">2</div>
+      <div class="step-label"><i class="fa-solid fa-scissors"></i> Clipper</div>
+    </div>
+    <div class="step-line"></div>
+    <div class="step" id="step-status" onclick="goToStep('status')">
+      <div class="step-dot" id="dot-status">3</div>
+      <div class="step-label"><i class="fa-solid fa-list-check"></i> Status</div>
+    </div>
   </div>
 
   <div class="container">
 
-    <!-- TAB: VIDEO DISCOVERY -->
-    <div id="tab-video" class="tab-content active">
-      <div class="card">
-        <h2>Atau Download dari URL YouTube</h2>
-        <div style="display:flex; gap:8px;">
-          <input type="text" id="directYtUrl" placeholder="https://youtube.com/watch?v=..." style="margin:0; flex:1;">
-          <button onclick="downloadDirectYt()"><i class="fa-solid fa-cloud-arrow-down"></i> Download ke Server</button>
+    <div id="section-discovery" class="section-anchor"></div>
+    <div class="card" id="panel-discovery">
+      <h2>Step 1 — Discovery & Download</h2>
+      <p class="text-muted" style="margin-top:-8px;">Pilih video dari list atau paste URL untuk download ke server.</p>
+
+      <h2 style="margin-top: 24px;">Download dari URL YouTube</h2>
+      <div class="download-box">
+        <input type="text" id="directYtUrl" placeholder="https://youtube.com/watch?v=..." style="margin:0; flex:1;">
+        <button onclick="downloadDirectYt()"><i class="fa-solid fa-cloud-arrow-down"></i> Download ke Server</button>
+      </div>
+
+      <hr style="border:0; border-top:1px solid var(--border); margin: 24px 0;">
+
+      <h2>Discovery Video (Indonesia)</h2>
+      <div class="video-toolbar">
+        <div class="search-box">
+          <input type="text" id="searchInput" placeholder="Cari video di YouTube...">
+          <button onclick="searchVideos()"><i class="fa-solid fa-magnifying-glass"></i></button>
         </div>
-        <hr style="border:0; border-top:1px solid var(--border); margin: 32px 0;">
-        <h2>Discovery Video (Indonesia)</h2>
-        <div class="video-toolbar">
-          <div class="search-box">
-            <input type="text" id="searchInput" placeholder="Cari video di YouTube...">
-            <button onclick="searchVideos()"><i class="fa-solid fa-magnifying-glass"></i></button>
-          </div>
-        </div>
-        <div id="videoLoader" style="display: none; text-align: center; padding: 40px;">
-          <div class="loader"></div>
-          <p>Memuat video...</p>
-        </div>
-        <div id="videoGrid" class="video-grid">
-          <!-- Video cards will appear here -->
-        </div>
+      </div>
+      <div id="videoLoader" style="display: none; text-align: center; padding: 40px;">
+        <div class="loader"></div>
+        <p>Memuat video...</p>
+      </div>
+      <div id="videoGrid" class="video-grid">
+        <!-- Video cards will appear here -->
       </div>
     </div>
 
-    <!-- TAB: CLIPPER -->
-    <div id="tab-clipper" class="tab-content">
-      <div class="card">
-        <h2>Buat Clip Baru</h2>
-        <p class="text-muted">Pilih sumber video yang akan dipotong.</p>
+    <div id="section-clipper" class="section-anchor step-hidden"></div>
+    <div class="card step-hidden" id="panel-clipper">
+      <h2>Step 2 — Clipper Tool</h2>
+      <p class="text-muted" style="margin-top:-8px;">Setelah download selesai, video otomatis siap dipotong di sini.</p>
+      <h2 style="margin-top: 24px;">Buat Clip Baru</h2>
+      <p class="text-muted">Pilih sumber video yang akan dipotong.</p>
 
-        <form id="clipForm" class="clipper-grid">
+      <form id="clipForm" class="clipper-grid">
           <div>
             <label><strong>1. Sumber Video</strong></label>
             <div style="margin-top:8px;">
@@ -508,6 +655,16 @@
             <label>Judul Clip:</label>
             <input type="text" id="clipTitle" name="title" value="My Clip" required>
 
+            <label>Description:</label>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; margin-bottom:8px;">
+              <button type="button" class="btn-secondary" onclick="descTemplate()"><i class="fa-solid fa-pen-to-square"></i> Template</button>
+              <button type="button" class="btn-secondary" onclick="descAdd('#Clipper\\n')">#Clipper</button>
+              <button type="button" class="btn-secondary" onclick="descAdd('#Podcast\\n')">#Podcast</button>
+              <button type="button" class="btn-secondary" onclick="descAdd('#Indonesia\\n')">#Indonesia</button>
+              <button type="button" class="btn-secondary" onclick="descClear()"><i class="fa-solid fa-trash"></i> Clear</button>
+            </div>
+            <textarea id="clipDescription" name="description" rows="6" placeholder="Tulis deskripsi video untuk YouTube (opsional)..."></textarea>
+
             <label
               style="display: flex; align-items: center; gap: 8px; margin-top: 16px; background: #f9fafb; padding: 12px; border-radius: 8px; border: 1px solid #e5e7eb;">
               <input type="checkbox" id="uploadToYoutube" name="upload_to_youtube" {% if is_connected %}checked{% else
@@ -524,18 +681,16 @@
             <div id="submitStatus" style="margin-top: 12px; font-weight: bold;"></div>
           </div>
         </form>
-      </div>
     </div>
 
-    <!-- TAB: STATUS -->
-    <div id="tab-status" class="tab-content">
-      <div class="card">
-        <h2>Status Job & Hasil</h2>
-        <button class="btn-secondary" onclick="refreshJobs()" style="margin-bottom: 20px;"><i
-            class="fa-solid fa-rotate-right"></i> Refresh Status</button>
-        <div id="jobsList" class="status-list">
-          <p class="text-muted">Belum ada job yang aktif saat ini.</p>
-        </div>
+    <div id="section-status" class="section-anchor step-hidden"></div>
+    <div class="card step-hidden" id="panel-status">
+      <h2>Step 3 — Status & Hasil</h2>
+      <p class="text-muted" style="margin-top:-8px;">Pantau progress trimming dan upload YouTube.</p>
+      <button class="btn-secondary" onclick="refreshJobs()" style="margin-bottom: 20px;"><i
+          class="fa-solid fa-rotate-right"></i> Refresh Status</button>
+      <div id="jobsList" class="status-list">
+        <p class="text-muted">Belum ada job yang aktif saat ini.</p>
       </div>
     </div>
 
@@ -544,17 +699,65 @@
   <script>
     let activeJobs = [];
     let pollingInterval = null;
+    let unlockedClipper = false;
+    let unlockedStatus = false;
+    const IS_CONNECTED = document.getElementById('platformSelect')?.dataset?.isConnected === '1';
 
-    function switchTab(tabId) {
-      document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    function onPlatformChange(value) {
+      if (value === 'youtube') {
+        window.location.href = '/auth/google/start';
+        return;
+      }
+      if (value === 'tiktok') {
+        alert('Integrasi TikTok segera hadir!');
+      } else if (value === 'instagram') {
+        alert('Integrasi Instagram segera hadir!');
+      }
+      const sel = document.getElementById('platformSelect');
+      if (!sel) return;
+      sel.value = IS_CONNECTED ? 'youtube' : '';
+    }
 
-      const tabBtns = document.querySelectorAll('.nav-tab');
-      if (tabId === 'video') tabBtns[0].classList.add('active');
-      else if (tabId === 'clipper') tabBtns[1].classList.add('active');
-      else if (tabId === 'status') tabBtns[2].classList.add('active');
+    function setStep(step) {
+      const step1El = document.getElementById('step-discovery');
+      const step2El = document.getElementById('step-clipper');
+      const step3El = document.getElementById('step-status');
 
-      document.getElementById('tab-' + tabId).classList.add('active');
+      const panel1 = document.getElementById('panel-discovery');
+      const panel2 = document.getElementById('panel-clipper');
+      const panel3 = document.getElementById('panel-status');
+      const anchor2 = document.getElementById('section-clipper');
+      const anchor3 = document.getElementById('section-status');
+
+      if (step === 'clipper') unlockedClipper = true;
+      if (step === 'status') {
+        unlockedClipper = true;
+        unlockedStatus = true;
+      }
+
+      if (panel1) panel1.classList.toggle('step-hidden', step !== 'discovery');
+      if (panel2) panel2.classList.toggle('step-hidden', step !== 'clipper');
+      if (panel3) panel3.classList.toggle('step-hidden', step !== 'status');
+      if (anchor2) anchor2.classList.toggle('step-hidden', step !== 'clipper');
+      if (anchor3) anchor3.classList.toggle('step-hidden', step !== 'status');
+
+      const steps = ['discovery', 'clipper', 'status'];
+      const idx = steps.indexOf(step);
+      steps.forEach((s, i) => {
+        const el = document.getElementById(`step-${s}`);
+        if (!el) return;
+        el.classList.remove('active', 'done');
+        if (i < idx) el.classList.add('done');
+        else if (i === idx) el.classList.add('active');
+      });
+    }
+
+    function goToStep(step) {
+      if (step === 'clipper' && !unlockedClipper) return;
+      if (step === 'status' && !unlockedStatus) return;
+      setStep(step);
+      const el = document.getElementById(`section-${step}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     function toggleSourceMode() {
@@ -588,7 +791,12 @@
       try {
         const res = await fetch(url);
         if (res.status === 401) {
-          alert("Sesi YouTube berakhir atau belum connect. Silakan Connect Ulang.");
+          let msg = "Sesi YouTube berakhir atau belum connect. Silakan Connect Ulang.";
+          try {
+            const err = await res.json();
+            if (err && err.detail) msg = String(err.detail);
+          } catch (e) {}
+          alert(msg);
           window.location.href = '/auth/google/start';
           return;
         }
@@ -687,7 +895,9 @@
     }
 
     function setupServerVideo(filePath, title) {
-      switchTab('clipper');
+      setStep('clipper');
+      const el = document.getElementById('section-clipper');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
       document.getElementById('radioServer').style.display = 'inline-block';
       document.getElementById('labelServer').style.display = 'inline-block';
       document.getElementById('radioServer').checked = true;
@@ -696,6 +906,10 @@
       document.getElementById('serverFilePath').value = filePath;
       document.getElementById('serverVideoTitle').innerText = title || "Video dari YouTube";
       document.getElementById('clipTitle').value = `Clip: ${title || 'YouTube'}`;
+      const desc = document.getElementById('clipDescription');
+      if (desc && !desc.value.trim()) {
+        desc.value = `Title: Clip: ${title || '[Judul Video Singkat & Catchy]'}\n\nDescription:\nSelamat datang di Fix Clip Clipper! 🎬\nDi video ini, kami menghadirkan potongan terbaik dari [kategori/video source], agar kamu bisa menikmati momen-momen penting secara cepat dan mudah.\n\nJangan lupa:\n👍 Like video ini kalau kamu suka\n💬 Comment pendapatmu di bawah\n🔔 Subscribe untuk update video clipping terbaru\n\nFollow kami di sosial media:\n\nInstagram: [link]\nTikTok: [link]\nTwitter: [link]\n\n#FixClipClipper #VideoClips #Shorts`;
+      }
     }
 
     function useVideo(videoId, title) {
@@ -707,6 +921,39 @@
       const url = document.getElementById('directYtUrl').value;
       if (!url) return;
       startDownload(url, "Custom YouTube URL");
+    }
+
+    function descEl() {
+      return document.getElementById('clipDescription');
+    }
+
+    function descAdd(text) {
+      const el = descEl();
+      if (!el) return;
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      const before = el.value.slice(0, start);
+      const after = el.value.slice(end);
+      el.value = before + text + after;
+      const pos = (before + text).length;
+      el.setSelectionRange(pos, pos);
+      el.focus();
+    }
+
+    function descClear() {
+      const el = descEl();
+      if (!el) return;
+      el.value = '';
+      el.focus();
+    }
+
+    function descTemplate() {
+      const el = descEl();
+      if (!el) return;
+      if (el.value.trim()) return;
+      const title = (document.getElementById('clipTitle')?.value || '[Judul Video Singkat & Catchy]').trim() || '[Judul Video Singkat & Catchy]';
+      el.value = `Title: ${title}\n\nDescription:\nSelamat datang di Fix Clip Clipper! 🎬\nDi video ini, kami menghadirkan potongan terbaik dari [kategori/video source], agar kamu bisa menikmati momen-momen penting secara cepat dan mudah.\n\nJangan lupa:\n👍 Like video ini kalau kamu suka\n💬 Comment pendapatmu di bawah\n🔔 Subscribe untuk update video clipping terbaru\n\nFollow kami di sosial media:\n\nInstagram: [link]\nTikTok: [link]\nTwitter: [link]\n\n#FixClipClipper #VideoClips #Shorts`;
+      el.focus();
     }
 
     // CLIPPER AI & SUBMIT
@@ -795,8 +1042,9 @@
 
         activeJobs.push(data.job_id);
 
-        // Pindah ke tab status
-        document.querySelectorAll('.nav-tab')[2].click();
+        setStep('status');
+        const el = document.getElementById('section-status');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         refreshJobs();
 
         if (!pollingInterval) {
@@ -856,8 +1104,22 @@
 
     // Load trending by default if video tab is active initially
     window.addEventListener('DOMContentLoaded', () => {
+      setStep('discovery');
       loadTrending();
     });
+  </script>
+
+  <footer class="footer">
+    <div>© <span id="year"></span> ClipFIX — Fix Clip Clipper.</div>
+    <div style="margin-top:8px;">
+      <a href="/">Home</a>
+      <span style="margin: 0 10px;">•</span>
+      <a href="https://youtube.com" target="_blank" rel="noopener noreferrer">YouTube</a>
+    </div>
+  </footer>
+
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
   </script>
 </body>
 

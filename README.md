@@ -9,12 +9,14 @@ Aplikasi web cerdas untuk menemukan video YouTube (khususnya Podcast/Trending), 
 - **Video Downloader:** Mengunduh video utuh dari YouTube langsung ke dalam server.
 - **AI Highlight Suggestion:** Menganalisis *peak* audio pada video untuk merekomendasikan *timestamp* (start/end) terbaik yang bisa dipotong.
 - **Video Clipper (PyAV):** Memotong video secara akurat tanpa *re-encode* eksternal. Mendukung konversi video Landscape (16:9) menjadi format Vertikal (9:16) secara proporsional (tanpa distorsi) untuk keperluan YouTube Shorts.
-- **Auto Upload:** Mengunggah hasil *clipping* kembali ke *channel* YouTube Anda secara otomatis lengkap dengan hashtag `#Shorts`.
+- **Auto Upload:** Mengunggah hasil *clipping* kembali ke *channel* YouTube Anda secara otomatis.
 
 ## Prasyarat
 
 Pastikan Anda telah menginstal:
-- **Python 3.9+**
+- **Python 3.10+ (Recommended: 3.12+)**
+
+Catatan penting untuk macOS: hindari *system Python* (contoh 3.9.6) karena sering memakai LibreSSL dan memunculkan warning/masalah kompatibilitas pada beberapa dependency (mis. `urllib3`).
 
 ## Instalasi
 
@@ -23,13 +25,20 @@ Pastikan Anda telah menginstal:
    cd clipper-web
    ```
 
-2. **Instal dependensi Python:**
+2. **Buat virtualenv (disarankan):**
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   python -m pip install --upgrade pip
+   ```
+
+3. **Instal dependensi Python:**
    ```bash
    pip install -r requirements.txt
    ```
    *Library utama yang digunakan: `fastapi`, `uvicorn`, `av` (PyAV), `yt-dlp`, `google-api-python-client`.*
 
-3. **Konfigurasi Google OAuth2:**
+4. **Konfigurasi Google OAuth2:**
    Anda perlu membuat kredensial OAuth2 di [Google Cloud Console](https://console.cloud.google.com/):
    - Buat *Project* baru.
    - Aktifkan **YouTube Data API v3**.
@@ -51,6 +60,16 @@ python3 -m uvicorn main:app --reload --port 8000
 ```
 
 Buka browser Anda dan kunjungi: **http://127.0.0.1:8000**
+
+## Troubleshooting (macOS)
+
+Jika Anda melihat warning seperti:
+- `NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+ ... LibreSSL ...`
+- `FutureWarning: non-supported Python version (3.9.6) ...`
+
+Solusi yang disarankan:
+- Pakai Python 3.10+ dan jalankan aplikasi di dalam virtualenv (`.venv`) seperti langkah instalasi di atas.
+- Pastikan menjalankan server dengan interpreter dari `.venv` (cek `which python` setelah `source .venv/bin/activate`).
 
 ## Cara Penggunaan
 
