@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth } from "@/context/AuthContext";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { 
   LayoutDashboard, 
@@ -12,9 +12,11 @@ import {
   PlusCircle, 
   Video,
   Wallet,
-  Briefcase
+  Briefcase,
+  TrendingUp
 } from "lucide-react";
 import Link from "next/link";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 
 export default function DashboardLayout({
   children,
@@ -23,6 +25,7 @@ export default function DashboardLayout({
 }) {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     if (!loading && !user) {
@@ -51,7 +54,9 @@ export default function DashboardLayout({
           { label: "Earnings", icon: Wallet, href: "/dashboard/earnings" }
         ]
     ),
-    { label: "My Profile", icon: User, href: "/dashboard/profile" },
+    { label: "AI Clipper Tool", icon: TrendingUp, href: "/dashboard/clipper" },
+    { label: "Marketplace", icon: ShoppingBag, href: "/dashboard/marketplace" },
+    // { label: "My Profile", icon: User, href: "/dashboard/profile" },
   ];
 
   return (
@@ -64,13 +69,15 @@ export default function DashboardLayout({
             <span>ClipFIX</span>
           </Link>
         </div>
+
+        <SidebarTrigger className="-ml-1" />
         
         <nav className="mt-6 space-y-1 px-4">
           {navItems.map((item) => (
             <Link
               key={item.href}
               href={item.href}
-              className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-primary"
+              className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ${pathname === item.href ? "bg-primary text-white" : ""}`}
             >
               <item.icon className="h-5 w-5" />
               {item.label}
@@ -101,7 +108,7 @@ export default function DashboardLayout({
             </p>
           </div>
           <div className="flex items-center gap-4">
-            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
+            <div onClick={() => router.push("/dashboard/profile")}  className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold cursor-pointer">
               {user.full_name.charAt(0)}
             </div>
           </div>
