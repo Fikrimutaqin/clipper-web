@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from db import get_db, User, Job, Portfolio
+from _database.db import get_db, User, Job, Portfolio
 from routes.auth import get_current_user
 from core import response_success
 from pydantic import BaseModel

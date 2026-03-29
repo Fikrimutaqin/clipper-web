@@ -6,7 +6,7 @@ import os
 from google_auth import get_google_creds
 from googleapiclient.discovery import build
 from services.job_service import _download_youtube_task, DOWNLOAD_TASKS
-from db import get_db, UserSession
+from _database.db import get_db, UserSession
 from sqlalchemy.orm import Session
 from core import response_success, CLIPS_DIR
 from processing import pyav_trim, suggest_segments_from_file
