@@ -1,5 +1,9 @@
+import os
 import secrets
 from typing import Any
+
+# Allow insecure transport for local development (OAuth over http://)
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 from fastapi import HTTPException, Request
 from google.auth.transport.requests import Request as GoogleAuthRequest

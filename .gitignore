@@ -1,4 +1,11 @@
 .env
+.env.example
 storage/
 __pycache__/
 *.pyc
+.trae*
+.vscode/
+frontend/node_modules/
+frontend/dist/
+backend/venv*
+backend/__pycache__/

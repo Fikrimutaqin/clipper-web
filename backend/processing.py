@@ -234,10 +234,22 @@ def pyav_trim(
                                 break
                             except Exception:
                                 break
+                            
+                            # Biarkan encoder yang mengelola PTS frame
+                            filtered_frame.pts = None
+                            
                             for out_packet in out_video.encode(filtered_frame):
+                                # Reset PTS/DTS paket agar muxer (MP4) mengaturnya secara otomatis dan monoton
+                                out_packet.pts = None
+                                out_packet.dts = None
                                 out_container.mux(out_packet)
                     elif packet.stream.type == "audio" and out_audio is not None:
+                        # Biarkan encoder yang mengelola PTS frame audio
+                        frame.pts = None
+                        
                         for out_packet in out_audio.encode(frame):
+                            out_packet.pts = None
+                            out_packet.dts = None
                             out_container.mux(out_packet)
 
                 if done_video and done_audio:
@@ -252,15 +264,23 @@ def pyav_trim(
                         break
                     except Exception:
                         break
+                    
+                    filtered_frame.pts = None
                     for out_packet in out_video.encode(filtered_frame):
+                        out_packet.pts = None
+                        out_packet.dts = None
                         out_container.mux(out_packet)
             except Exception:
                 pass
 
             for out_packet in out_video.encode():
+                out_packet.pts = None
+                out_packet.dts = None
                 out_container.mux(out_packet)
             if out_audio is not None:
                 for out_packet in out_audio.encode():
+                    out_packet.pts = None
+                    out_packet.dts = None
                     out_container.mux(out_packet)
         finally:
             out_container.close()
