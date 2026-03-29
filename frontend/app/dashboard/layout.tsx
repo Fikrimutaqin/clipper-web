@@ -10,7 +10,9 @@ import {
   User, 
   LogOut, 
   PlusCircle, 
-  Video 
+  Video,
+  Wallet,
+  Briefcase
 } from "lucide-react";
 import Link from "next/link";
 
@@ -39,8 +41,15 @@ export default function DashboardLayout({
   const navItems = [
     { label: "Overview", icon: LayoutDashboard, href: "/dashboard" },
     ...(user.role === "OWNER" 
-      ? [{ label: "Post New Job", icon: PlusCircle, href: "/dashboard/post-job" }]
-      : [{ label: "Marketplace", icon: ShoppingBag, href: "/dashboard/marketplace" }]
+      ? [
+          { label: "Post New Job", icon: PlusCircle, href: "/dashboard/post-job" },
+          { label: "Manage Jobs", icon: Briefcase, href: "/dashboard/my-jobs" }
+        ]
+      : [
+          { label: "Marketplace", icon: ShoppingBag, href: "/dashboard/marketplace" },
+          { label: "My Jobs", icon: Briefcase, href: "/dashboard/my-jobs" },
+          { label: "Earnings", icon: Wallet, href: "/dashboard/earnings" }
+        ]
     ),
     { label: "My Profile", icon: User, href: "/dashboard/profile" },
   ];
