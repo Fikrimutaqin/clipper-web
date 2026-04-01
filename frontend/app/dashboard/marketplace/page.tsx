@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { 
-  ShoppingBag, 
   Loader2, 
   Briefcase, 
   Wallet, 
@@ -12,10 +11,7 @@ import {
   Users,
   Star,
   MessageSquare,
-  Globe,
-  Instagram,
-  Youtube,
-  Twitter
+  Globe
 } from "lucide-react";
 import api from "@/lib/axios";
 import { useAuth } from "@/context/AuthContext";
@@ -206,9 +202,39 @@ export default function MarketplacePage() {
                 </p>
 
                 <div className="flex gap-3 text-gray-400">
-                  {clipper.portfolio?.social_links?.youtube && <Youtube className="h-4 w-4 hover:text-red-600 cursor-pointer" />}
-                  {clipper.portfolio?.social_links?.instagram && <Instagram className="h-4 w-4 hover:text-pink-600 cursor-pointer" />}
-                  {clipper.portfolio?.social_links?.twitter && <Twitter className="h-4 w-4 hover:text-blue-400 cursor-pointer" />}
+                  {clipper.portfolio?.social_links?.youtube && (
+                    <a
+                      href={clipper.portfolio.social_links.youtube}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="YouTube"
+                      className="hover:text-primary transition-colors"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                    </a>
+                  )}
+                  {clipper.portfolio?.social_links?.instagram && (
+                    <a
+                      href={clipper.portfolio.social_links.instagram}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Instagram"
+                      className="hover:text-primary transition-colors"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                    </a>
+                  )}
+                  {clipper.portfolio?.social_links?.twitter && (
+                    <a
+                      href={clipper.portfolio.social_links.twitter}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Twitter"
+                      className="hover:text-primary transition-colors"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                    </a>
+                  )}
                   {!clipper.portfolio?.social_links && <Globe className="h-4 w-4" />}
                 </div>
 

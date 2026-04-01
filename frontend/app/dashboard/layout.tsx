@@ -1,20 +1,36 @@
 "use client";
 
 import { useAuth } from "@/context/AuthContext";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { 
   LayoutDashboard, 
   Scissors, 
   ShoppingBag, 
-  User, 
   LogOut, 
   PlusCircle, 
-  Video,
   Wallet,
-  Briefcase
+  Briefcase,
+  TrendingUp
 } from "lucide-react";
 import Link from "next/link";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarSeparator,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
+import { Separator } from "@/components/ui/separator";
 
 export default function DashboardLayout({
   children,
@@ -23,6 +39,7 @@ export default function DashboardLayout({
 }) {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     if (!loading && !user) {
@@ -40,75 +57,132 @@ export default function DashboardLayout({
 
   const navItems = [
     { label: "Overview", icon: LayoutDashboard, href: "/dashboard" },
-    ...(user.role === "OWNER" 
+    ...(user.role === "OWNER"
       ? [
           { label: "Post New Job", icon: PlusCircle, href: "/dashboard/post-job" },
-          { label: "Manage Jobs", icon: Briefcase, href: "/dashboard/my-jobs" }
+          { label: "Manage Jobs", icon: Briefcase, href: "/dashboard/my-jobs" },
+          { label: "Browse Clippers", icon: ShoppingBag, href: "/dashboard/marketplace" },
         ]
       : [
           { label: "Marketplace", icon: ShoppingBag, href: "/dashboard/marketplace" },
           { label: "My Jobs", icon: Briefcase, href: "/dashboard/my-jobs" },
-          { label: "Earnings", icon: Wallet, href: "/dashboard/earnings" }
-        ]
-    ),
-    { label: "My Profile", icon: User, href: "/dashboard/profile" },
+          { label: "Earnings", icon: Wallet, href: "/dashboard/earnings" },
+        ]),
+  ];
+
+  const toolItems = [
+    { label: "AI Clipper", icon: TrendingUp, href: "/dashboard/clipper" },
   ];
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
-      {/* Sidebar */}
-      <aside className="fixed left-0 top-0 h-full w-64 border-r bg-white">
-        <div className="flex h-16 items-center px-6">
-          <Link href="/" className="flex items-center gap-2 text-xl font-bold text-primary">
-            <Scissors className="h-6 w-6" />
+    <SidebarProvider>
+      <Sidebar>
+        <SidebarHeader className="p-4">
+          <Link href="/" className="flex items-center gap-2 text-lg font-bold text-primary">
+            <Scissors className="h-5 w-5" />
             <span>ClipFIX</span>
           </Link>
-        </div>
-        
-        <nav className="mt-6 space-y-1 px-4">
-          {navItems.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-primary"
-            >
-              <item.icon className="h-5 w-5" />
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-
-        <div className="absolute bottom-4 w-full px-4">
-          <button
-            onClick={logout}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
+          <div
+            className="mt-2 flex items-center gap-3 rounded-xl border bg-white px-3 py-2"
+            onClick={() => router.push("/dashboard/profile")}
+            role="button"
           >
-            <LogOut className="h-5 w-5" />
-            Logout
-          </button>
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <main className="ml-64 w-full p-8">
-        <header className="mb-8 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              Welcome back, {user.full_name}!
-            </h1>
-            <p className="text-sm text-gray-500">
-              Role: <span className="font-semibold text-primary">{user.role}</span>
-            </p>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
+            <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
               {user.full_name.charAt(0)}
             </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-bold text-gray-900">{user.full_name}</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{user.role}</p>
+            </div>
+          </div>
+        </SidebarHeader>
+
+        <SidebarSeparator />
+
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {navItems.map((item) => (
+                  <SidebarMenuItem key={item.href}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={item.href === pathname}
+                      className={
+                        item.href === pathname
+                          ? "!bg-primary !text-white hover:!bg-primary/90"
+                          : undefined
+                      }
+                    >
+                      <Link href={item.href} className="flex items-center gap-3">
+                        <item.icon className="h-4 w-4" />
+                        <span>{item.label}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          <SidebarGroup>
+            <SidebarGroupLabel>Tools</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {toolItems.map((item) => (
+                  <SidebarMenuItem key={item.href}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={item.href === pathname}
+                      className={
+                        item.href === pathname
+                          ? "!bg-primary !text-white hover:!bg-primary/90"
+                          : undefined
+                      }
+                    >
+                      <Link href={item.href} className="flex items-center gap-3">
+                        <item.icon className="h-4 w-4" />
+                        <span>{item.label}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+
+        <SidebarFooter>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton onClick={logout} className="text-red-600 hover:text-red-700">
+                <LogOut className="h-4 w-4" />
+                <span>Logout</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+      </Sidebar>
+
+      <SidebarInset>
+        <header className="flex h-16 shrink-0 items-center gap-2 border-b bg-white px-4">
+          <SidebarTrigger className="-ml-1" />
+          <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
+          <div className="flex flex-1 items-center justify-between">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-bold text-gray-900">Welcome back, {user.full_name}!</p>
+            </div>
+            <button
+              onClick={() => router.push("/dashboard/profile")}
+              className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold"
+            >
+              {user.full_name.charAt(0)}
+            </button>
           </div>
         </header>
-        
-        {children}
-      </main>
-    </div>
+        <main className="p-6 md:p-8">{children}</main>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }

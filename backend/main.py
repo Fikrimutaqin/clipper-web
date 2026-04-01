@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from core import ensure_dirs, CLIPS_DIR
-from db import init_db
+from _database.db import init_db
 from routes import auth, jobs, marketplace, youtube
 import os
 

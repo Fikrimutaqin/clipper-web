@@ -10,7 +10,7 @@ from yt_dlp import YoutubeDL
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from core import UPLOADS_DIR, DOWNLOADS_DIR, CLIPS_DIR
-from db import update_job, get_job, get_google_token
+from _database.db import update_job, get_job, get_google_token
 from google_auth import get_google_creds
 from processing import pyav_trim
 

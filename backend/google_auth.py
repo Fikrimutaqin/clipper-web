@@ -12,7 +12,7 @@ from google_auth_oauthlib.flow import Flow
 from itsdangerous import BadSignature
 
 from core import serializer, settings
-from db import get_google_token, upsert_session
+from _database.db import get_google_token, upsert_session
 
 
 def get_google_creds(sid: str) -> Credentials:
