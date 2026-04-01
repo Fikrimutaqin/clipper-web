@@ -19,6 +19,8 @@ DOWNLOAD_TASKS: dict[str, dict[str, Any]] = {}
 def _download_youtube_task(task_id: str, url: str):
     """Background download task that writes progress into DOWNLOAD_TASKS."""
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    if task_id in DOWNLOAD_TASKS:
+        DOWNLOAD_TASKS[task_id]["status"] = "downloading"
 
     def progress_hook(d):
         if d['status'] == 'downloading':
@@ -30,9 +32,12 @@ def _download_youtube_task(task_id: str, url: str):
                 pass
         elif d['status'] == 'finished':
             DOWNLOAD_TASKS[task_id]['progress'] = 100
+            if DOWNLOAD_TASKS.get(task_id, {}).get("status") == "downloading":
+                DOWNLOAD_TASKS[task_id]["status"] = "merging"
 
+    url = (url or "").strip().strip("`").strip().strip('"').strip("'")
     ydl_opts = {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
         "outtmpl": str(DOWNLOADS_DIR / f"dl_{task_id}_%(id)s.%(ext)s"),
         "progress_hooks": [progress_hook],
         "quiet": True,
@@ -49,11 +54,24 @@ def _download_youtube_task(task_id: str, url: str):
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
         },
-        "cookiesfrombrowser": ("chrome",),
     }
+    use_browser_cookies = os.environ.get("YTDLP_COOKIES_FROM_BROWSER", "").strip() in {"1", "true", "yes"}
+    if use_browser_cookies:
+        ydl_opts["cookiesfrombrowser"] = ("chrome",)
+
     try:
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+        try:
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+        except Exception as e:
+            msg = str(e)
+            if "could not find chrome cookies database" in msg.lower() and "cookiesfrombrowser" in ydl_opts:
+                ydl_opts.pop("cookiesfrombrowser", None)
+                with YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+            else:
+                raise
+
             filepaths: list[Path] = []
             reqs = info.get("requested_downloads") if isinstance(info, dict) else None
             if isinstance(reqs, list):
@@ -67,6 +85,7 @@ def _download_youtube_task(task_id: str, url: str):
 
             filepath = filepaths[0]
             if len(filepaths) >= 2:
+                DOWNLOAD_TASKS[task_id]["status"] = "merging"
                 v_path = filepaths[0]
                 a_path = filepaths[1]
                 merged_path = DOWNLOADS_DIR / f"dl_{task_id}_merged.mp4"

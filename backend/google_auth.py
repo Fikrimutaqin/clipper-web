@@ -1,6 +1,6 @@
 import os
 import secrets
-from typing import Any
+from typing import Any, Optional, Sequence
 
 # Allow insecure transport for local development (OAuth over http://)
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
@@ -45,13 +45,18 @@ def get_google_creds(sid: str) -> Credentials:
 
 def google_flow(*, state: str, redirect_uri: str) -> Flow:
     """Create an OAuth Flow instance with the app scopes and redirect URIs."""
-    if not settings.google_client_id or not settings.google_client_secret:
+    if not settings.google_client_id or not settings.google_client_secret or settings.google_client_secret == "your-google-client-secret":
         raise HTTPException(
-            status_code=500, detail="GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET belum diset"
+            status_code=500,
+            detail="GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET belum diset (cek file .env).",
         )
     redirect_uris = [redirect_uri]
-    if settings.google_redirect_uri and settings.google_redirect_uri not in redirect_uris:
-        redirect_uris.append(settings.google_redirect_uri)
+    scopes: Sequence[str] = [
+        "openid",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/youtube.upload",
+        "https://www.googleapis.com/auth/youtube.readonly",
+    ]
     return Flow.from_client_config(
         {
             "web": {
@@ -62,13 +67,36 @@ def google_flow(*, state: str, redirect_uri: str) -> Flow:
                 "redirect_uris": redirect_uris,
             }
         },
-        scopes=[
-            "openid",
-            "https://www.googleapis.com/auth/userinfo.email",
-            "https://www.googleapis.com/auth/youtube.upload",
-            "https://www.googleapis.com/auth/youtube.readonly",
-        ],
+        scopes=list(scopes),
         state=state,
+        redirect_uri=redirect_uri,
+    )
+
+
+def google_login_flow(*, state: str, redirect_uri: str) -> Flow:
+    if not settings.google_client_id or not settings.google_client_secret or settings.google_client_secret == "your-google-client-secret":
+        raise HTTPException(
+            status_code=500,
+            detail="GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET belum diset (cek file .env).",
+        )
+    redirect_uris = [redirect_uri]
+    scopes: Sequence[str] = [
+        "openid",
+        "https://www.googleapis.com/auth/userinfo.email",
+    ]
+    return Flow.from_client_config(
+        {
+            "web": {
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": redirect_uris,
+            }
+        },
+        scopes=list(scopes),
+        state=state,
+        redirect_uri=redirect_uri,
     )
 
 

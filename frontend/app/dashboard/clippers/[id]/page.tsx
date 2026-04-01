@@ -22,6 +22,8 @@ interface Clipper {
   id: string;
   full_name: string;
   avatar_url?: string;
+  rating_avg?: number | null;
+  rating_count?: number;
   portfolio: {
     bio: string;
     social_links: {
@@ -41,6 +43,11 @@ export default function ClipperDetailPage() {
   const [clipper, setClipper] = useState<Clipper | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeJobs, setActiveJobs] = useState<any[]>([]);
+  const [showPendingJobs, setShowPendingJobs] = useState(false);
+  const [selectedJobId, setSelectedJobId] = useState("");
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState("");
+  const [depositing, setDepositing] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -51,7 +58,11 @@ export default function ClipperDetailPage() {
 
         if (user?.role === "OWNER") {
           const jobsRes = await api.get("/api/jobs/my-jobs");
-          setActiveJobs(jobsRes.data.data.filter((j: any) => j.status === "OPEN"));
+          const openJobs = jobsRes.data.data.filter((j: any) => j.status === "OPEN");
+          setActiveJobs(openJobs);
+          const firstEligible = openJobs.find((j: any) => (j.payment_status || "PENDING") === "ESCROW_HOLD");
+          if (firstEligible) setSelectedJobId(firstEligible.id);
+          else if (openJobs.length > 0) setSelectedJobId(openJobs[0].id);
         }
       } catch (err) {
         console.error("Failed to fetch clipper detail", err);
@@ -62,6 +73,63 @@ export default function ClipperDetailPage() {
     if (id) fetchData();
   }, [id, user]);
 
+  const eligibleJobs = activeJobs.filter((j: any) => (j.payment_status || "PENDING") === "ESCROW_HOLD");
+  const visibleJobs = showPendingJobs ? activeJobs : eligibleJobs;
+  const selectedJob = activeJobs.find((j: any) => j.id === selectedJobId);
+  const selectedPaymentStatus = selectedJob?.payment_status || "PENDING";
+  const canInvite = Boolean(selectedJobId) && selectedPaymentStatus === "ESCROW_HOLD";
+
+  const refreshOpenJobs = async () => {
+    if (!user || user.role !== "OWNER") return;
+    const jobsRes = await api.get("/api/jobs/my-jobs");
+    const openJobs = jobsRes.data.data.filter((j: any) => j.status === "OPEN");
+    setActiveJobs(openJobs);
+    const stillSelected = openJobs.find((j: any) => j.id === selectedJobId);
+    if (!stillSelected) {
+      const firstEligible = openJobs.find((j: any) => (j.payment_status || "PENDING") === "ESCROW_HOLD");
+      if (firstEligible) setSelectedJobId(firstEligible.id);
+      else if (openJobs.length > 0) setSelectedJobId(openJobs[0].id);
+      else setSelectedJobId("");
+    }
+  };
+
+  const handleDepositEscrow = async () => {
+    if (!user || user.role !== "OWNER") return;
+    if (!selectedJobId) return;
+    setDepositing(true);
+    setInviteError("");
+    try {
+      await api.post(`/api/marketplace/jobs/${selectedJobId}/pay`);
+      await refreshOpenJobs();
+    } catch (err: any) {
+      setInviteError(err.response?.data?.detail || "Gagal deposit escrow.");
+    } finally {
+      setDepositing(false);
+    }
+  };
+
+  const handleInvite = async () => {
+    if (!user || user.role !== "OWNER" || !clipper) return;
+    if (!selectedJobId) return;
+    setInviting(true);
+    setInviteError("");
+    try {
+      if (!canInvite) {
+        setInviteError("Dana belum dititipkan. Silakan deposit ke Escrow dulu (ESCROW_HOLD).");
+        return;
+      }
+      await api.post(`/api/marketplace/jobs/${selectedJobId}/invite`, {
+        clipper_id: clipper.id,
+      });
+      alert("Clipper berhasil diundang. Pekerjaan dimulai!");
+      router.push(`/dashboard/jobs/${selectedJobId}`);
+    } catch (err: any) {
+      setInviteError(err.response?.data?.detail || "Gagal mengundang clipper.");
+    } finally {
+      setInviting(false);
+    }
+  };
+
   const getYoutubeEmbedUrl = (url: string) => {
     let videoId = "";
     if (url.includes("v=")) videoId = url.split("v=")[1].split("&")[0];
@@ -71,6 +139,11 @@ export default function ClipperDetailPage() {
 
   if (loading) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin h-8 w-8 text-primary" /></div>;
   if (!clipper) return <div className="text-center py-20"><p>Clipper tidak ditemukan.</p><Link href="/dashboard/marketplace"><Button variant="ghost">Kembali ke Marketplace</Button></Link></div>;
+
+  const ratingLabel =
+    typeof clipper.rating_avg === "number"
+      ? `${clipper.rating_avg.toFixed(1)} • ${clipper.rating_count || 0}`
+      : "New";
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-20">
@@ -87,8 +160,13 @@ export default function ClipperDetailPage() {
             </div>
             <h1 className="text-2xl font-bold text-gray-900">{clipper.full_name}</h1>
             <div className="flex items-center justify-center gap-1 text-orange-400 mt-2 mb-6">
-              {[...Array(5)].map((_, i) => <Star key={i} className="h-4 w-4 fill-current" />)}
-              <span className="text-sm text-gray-500 ml-1">(5.0)</span>
+              {[...Array(5)].map((_, i) => (
+                <Star
+                  key={i}
+                  className={`h-4 w-4 ${typeof clipper.rating_avg === "number" && i < Math.round(clipper.rating_avg) ? "fill-current" : ""}`}
+                />
+              ))}
+              <span className="text-sm text-gray-500 ml-1">({ratingLabel})</span>
             </div>
 
             <div className="flex justify-center gap-4 mb-8">
@@ -137,14 +215,68 @@ export default function ClipperDetailPage() {
                 <Button className="w-full rounded-xl py-6 text-lg font-bold shadow-lg shadow-primary/20">
                   <MessageSquare className="h-5 w-5 mr-2" /> Hubungi Clipper
                 </Button>
-                <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Atau Pilih Lowongan Aktif</p>
+                <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Invite ke Lowongan (OPEN)</p>
                 {activeJobs.length > 0 ? (
-                  <div className="space-y-2">
-                    {activeJobs.map(job => (
-                      <Button key={job.id} variant="outline" className="w-full rounded-xl text-xs justify-between group hover:border-primary transition-all">
-                        {job.title} <Briefcase className="h-3 w-3 text-gray-300 group-hover:text-primary" />
+                  <div className="space-y-3">
+                    <label className="flex items-center justify-between gap-3 rounded-xl border bg-gray-50 px-3 py-2 text-xs text-gray-700">
+                      <span className="font-medium">Show PENDING jobs</span>
+                      <input
+                        type="checkbox"
+                        checked={showPendingJobs}
+                        onChange={(e) => {
+                          setShowPendingJobs(e.target.checked);
+                          setInviteError("");
+                          if (!e.target.checked) {
+                            const firstEligible = eligibleJobs[0];
+                            if (firstEligible) setSelectedJobId(firstEligible.id);
+                          } else if (!selectedJobId && activeJobs.length > 0) {
+                            setSelectedJobId(activeJobs[0].id);
+                          }
+                        }}
+                      />
+                    </label>
+                    <select
+                      className="w-full rounded-xl border-gray-300 text-sm focus:ring-primary focus:border-primary"
+                      value={selectedJobId}
+                      onChange={(e) => {
+                        setSelectedJobId(e.target.value);
+                        setInviteError("");
+                      }}
+                    >
+                      {visibleJobs.map((job) => (
+                        <option key={job.id} value={job.id}>
+                          {job.title} • {job.payment_status || "PENDING"}
+                        </option>
+                      ))}
+                    </select>
+                    {!showPendingJobs && eligibleJobs.length === 0 && (
+                      <p className="text-xs text-gray-500">
+                        Tidak ada job yang siap di-invite. Aktifkan toggle untuk menampilkan job PENDING lalu deposit escrow.
+                      </p>
+                    )}
+                    {inviteError && <p className="text-xs text-red-600">{inviteError}</p>}
+                    {selectedJobId && selectedPaymentStatus !== "ESCROW_HOLD" && (
+                      <Button
+                        onClick={handleDepositEscrow}
+                        disabled={depositing}
+                        variant="outline"
+                        className="w-full rounded-xl justify-center"
+                      >
+                        {depositing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Briefcase className="h-4 w-4 mr-2" />}
+                        Deposit ke Escrow
                       </Button>
-                    ))}
+                    )}
+                    <Button
+                      onClick={handleInvite}
+                      disabled={inviting || !selectedJobId || !canInvite}
+                      className="w-full rounded-xl justify-center"
+                    >
+                      {inviting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Briefcase className="h-4 w-4 mr-2" />}
+                      Invite Clipper
+                    </Button>
+                    <p className="text-[10px] text-gray-400">
+                      Syarat: job harus sudah Deposit ke Escrow (ESCROW_HOLD).
+                    </p>
                   </div>
                 ) : (
                   <p className="text-xs text-gray-400 italic">Kamu tidak memiliki lowongan aktif.</p>

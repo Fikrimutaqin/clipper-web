@@ -1,8 +1,8 @@
 import json
 import time
 import os
-from typing import Any, Optional, List
-from sqlalchemy import create_engine, Column, Integer, String, Float, Text, ForeignKey, Boolean, DateTime, Enum
+from typing import Any, Optional
+from sqlalchemy import create_engine, Column, Integer, String, Float, Text, ForeignKey, Boolean, DateTime, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -65,6 +65,8 @@ class Job(Base):
     result_url = Column(Text, nullable=True) # Link to finished video or cloud storage
     owner_notes = Column(Text, nullable=True) # Feedback from owner
     payment_status = Column(String(50), default="PENDING") # PENDING, ESCROW_HOLD, RELEASED, REFUNDED
+    owner_rating = Column(Integer, nullable=True)
+    owner_review = Column(Text, nullable=True)
     
     error = Column(Text, nullable=True)
     created_at = Column(Integer, nullable=False)
@@ -83,8 +85,75 @@ class Portfolio(Base):
     
     user = relationship("User", back_populates="portfolio")
 
+class Notification(Base):
+    __tablename__ = "notifications"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    type = Column(String(50), nullable=False)
+    message = Column(Text, nullable=False)
+    meta_json = Column(Text, nullable=True)
+    created_at = Column(Integer, nullable=False)
+    read_at = Column(Integer, nullable=True)
+
+class Withdrawal(Base):
+    __tablename__ = "withdrawals"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    amount = Column(Float, nullable=False, default=0.0)
+    status = Column(String(50), nullable=False, default="COMPLETED")  # COMPLETED, FAILED
+    created_at = Column(Integer, nullable=False)
+
+class SchemaMigration(Base):
+    __tablename__ = "schema_migrations"
+    id = Column(String(255), primary_key=True)
+    applied_at = Column(Integer, nullable=False)
+
+def _column_exists(conn, table_name: str, column_name: str) -> bool:
+    sql = """
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = :table_name
+          AND column_name = :column_name
+    """
+    count = conn.execute(text(sql), {"table_name": table_name, "column_name": column_name}).scalar()
+    return bool(count and int(count) > 0)
+
+def run_migrations() -> None:
+    with engine.begin() as conn:
+        # Ensure migrations table exists
+        Base.metadata.create_all(bind=conn)
+
+        migrations = [
+            ("2026-04-01-add-payment-status-to-jobs", [
+                ("jobs", "payment_status", "ALTER TABLE jobs ADD COLUMN payment_status VARCHAR(50) DEFAULT 'PENDING'"),
+            ]),
+            ("2026-04-02-add-owner-rating-to-jobs", [
+                ("jobs", "owner_rating", "ALTER TABLE jobs ADD COLUMN owner_rating INT NULL"),
+                ("jobs", "owner_review", "ALTER TABLE jobs ADD COLUMN owner_review TEXT NULL"),
+            ]),
+        ]
+
+        for migration_id, ops in migrations:
+            applied = conn.execute(
+                text("SELECT COUNT(*) FROM schema_migrations WHERE id = :id"),
+                {"id": migration_id},
+            ).scalar()
+            if applied and int(applied) > 0:
+                continue
+
+            for table_name, column_name, ddl in ops:
+                if not _column_exists(conn, table_name, column_name):
+                    conn.execute(text(ddl))
+
+            conn.execute(
+                text("INSERT INTO schema_migrations (id, applied_at) VALUES (:id, :applied_at)"),
+                {"id": migration_id, "applied_at": int(time.time())},
+            )
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    run_migrations()
 
 def get_db():
     db = SessionLocal()

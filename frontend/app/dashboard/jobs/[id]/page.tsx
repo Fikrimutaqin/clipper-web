@@ -1,20 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import api from "@/lib/axios";
 import { 
   Loader2, 
   ArrowLeft, 
-  Briefcase, 
   Wallet, 
   ExternalLink, 
   Send, 
   CheckCircle2, 
   XCircle,
-  Clock,
-  MessageSquare
+  MessageSquare,
+  Star
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,11 +32,12 @@ interface Job {
   result_url?: string;
   owner_notes?: string;
   payment_status: string;
+  owner_rating?: number | null;
+  owner_review?: string | null;
 }
 
 export default function JobDetailPage() {
   const { id } = useParams();
-  const router = useRouter();
   const { user } = useAuth();
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
@@ -46,6 +46,8 @@ export default function JobDetailPage() {
   // Form states
   const [resultUrl, setResultUrl] = useState("");
   const [reviewNotes, setReviewNotes] = useState("");
+  const [ratingValue, setRatingValue] = useState<number>(5);
+  const [ratingReview, setRatingReview] = useState("");
 
   const fetchJob = async () => {
     try {
@@ -97,6 +99,20 @@ export default function JobDetailPage() {
       fetchJob();
     } catch (err) {
       alert("Gagal melakukan pembayaran.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRateClipper = async () => {
+    if (!job) return;
+    setActionLoading(true);
+    try {
+      await api.post(`/api/marketplace/jobs/${id}/rate`, { rating: ratingValue, review: ratingReview || null });
+      alert("Rating berhasil dikirim!");
+      fetchJob();
+    } catch (err: any) {
+      alert(err.response?.data?.detail || "Gagal mengirim rating.");
     } finally {
       setActionLoading(false);
     }
@@ -249,6 +265,60 @@ export default function JobDetailPage() {
           <div className="p-4 bg-orange-50 border border-orange-100 text-orange-800 rounded-lg italic">
             "{job.owner_notes}"
           </div>
+        </div>
+      )}
+
+      {isOwner && job.status === "COMPLETED" && job.clipper_id && (
+        <div className="bg-white rounded-2xl border p-8 shadow-sm space-y-6">
+          <h2 className="text-xl font-bold text-gray-900">Rating Clipper</h2>
+
+          {job.owner_rating ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-orange-400">
+                {[...Array(5)].map((_, i) => (
+                  <Star key={i} className={`h-5 w-5 ${i < job.owner_rating! ? "fill-current" : ""}`} />
+                ))}
+                <span className="text-sm text-gray-600 ml-2">{job.owner_rating}/5</span>
+              </div>
+              {job.owner_review ? (
+                <div className="p-4 rounded-xl bg-gray-50 border text-gray-700 italic">
+                  "{job.owner_review}"
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                {[1, 2, 3, 4, 5].map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setRatingValue(v)}
+                    className={`p-2 rounded-full border transition-colors ${
+                      v <= ratingValue ? "bg-orange-50 border-orange-200 text-orange-500" : "bg-white text-gray-300"
+                    }`}
+                  >
+                    <Star className={`h-5 w-5 ${v <= ratingValue ? "fill-current" : ""}`} />
+                  </button>
+                ))}
+                <span className="text-sm text-gray-600 ml-2">{ratingValue}/5</span>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="ratingReview">Review (Opsional)</Label>
+                <textarea
+                  id="ratingReview"
+                  className="w-full p-3 rounded-lg border focus:ring-2 focus:ring-primary outline-none"
+                  placeholder="Tulis feedback singkat untuk clipper..."
+                  value={ratingReview}
+                  onChange={(e) => setRatingReview(e.target.value)}
+                />
+              </div>
+              <Button onClick={handleRateClipper} disabled={actionLoading} className="rounded-full">
+                {actionLoading ? <Loader2 className="animate-spin mr-2" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                Kirim Rating
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>
