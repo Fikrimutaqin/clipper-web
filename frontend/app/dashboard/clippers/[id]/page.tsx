@@ -8,9 +8,6 @@ import {
   Star, 
   MessageSquare, 
   Globe, 
-  Instagram, 
-  Youtube, 
-  Twitter,
   ExternalLink,
   Briefcase,
   PlayCircle,
@@ -96,18 +93,36 @@ export default function ClipperDetailPage() {
 
             <div className="flex justify-center gap-4 mb-8">
               {clipper.portfolio?.social_links?.youtube && (
-                <a href={clipper.portfolio.social_links.youtube} target="_blank" className="p-3 rounded-full bg-gray-50 hover:bg-red-50 text-gray-400 hover:text-red-600 transition-all">
-                  <Youtube className="h-5 w-5" />
+                <a
+                  href={clipper.portfolio.social_links.youtube}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="YouTube"
+                  className="p-3 rounded-full bg-gray-50 hover:bg-gray-100 text-gray-400 hover:text-primary transition-all"
+                >
+                  <ExternalLink className="h-5 w-5" />
                 </a>
               )}
               {clipper.portfolio?.social_links?.instagram && (
-                <a href={clipper.portfolio.social_links.instagram} target="_blank" className="p-3 rounded-full bg-gray-50 hover:bg-pink-50 text-gray-400 hover:text-pink-600 transition-all">
-                  <Instagram className="h-5 w-5" />
+                <a
+                  href={clipper.portfolio.social_links.instagram}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Instagram"
+                  className="p-3 rounded-full bg-gray-50 hover:bg-gray-100 text-gray-400 hover:text-primary transition-all"
+                >
+                  <ExternalLink className="h-5 w-5" />
                 </a>
               )}
               {clipper.portfolio?.social_links?.twitter && (
-                <a href={clipper.portfolio.social_links.twitter} target="_blank" className="p-3 rounded-full bg-gray-50 hover:bg-blue-50 text-gray-400 hover:text-blue-400 transition-all">
-                  <Twitter className="h-5 w-5" />
+                <a
+                  href={clipper.portfolio.social_links.twitter}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Twitter"
+                  className="p-3 rounded-full bg-gray-50 hover:bg-gray-100 text-gray-400 hover:text-primary transition-all"
+                >
+                  <ExternalLink className="h-5 w-5" />
                 </a>
               )}
               {!clipper.portfolio?.social_links && (

@@ -5,11 +5,13 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Save, Instagram, Twitter, Video, Plus, X } from "lucide-react";
+import { Loader2, Save, Video, Plus, X, CheckCircle2, Globe } from "lucide-react";
 import api from "@/lib/axios";
 
 export default function ProfilePage() {
   const { user } = useAuth();
+  const SaveIcon = Save ?? CheckCircle2;
+  const TikTokIcon = Video ?? CheckCircle2;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [bio, setBio] = useState("");
@@ -100,7 +102,7 @@ export default function ProfilePage() {
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="space-y-2">
-                  <Label className="flex items-center gap-2"><Instagram className="h-4 w-4" /> Instagram</Label>
+                  <Label className="flex items-center gap-2"><Globe className="h-4 w-4" /> Instagram</Label>
                   <Input 
                     placeholder="@username" 
                     value={socialLinks.instagram}
@@ -108,7 +110,7 @@ export default function ProfilePage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label className="flex items-center gap-2"><Twitter className="h-4 w-4" /> Twitter</Label>
+                  <Label className="flex items-center gap-2"><Globe className="h-4 w-4" /> Twitter</Label>
                   <Input 
                     placeholder="@username" 
                     value={socialLinks.twitter}
@@ -116,7 +118,7 @@ export default function ProfilePage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label className="flex items-center gap-2"><Video className="h-4 w-4" /> TikTok</Label>
+                  <Label className="flex items-center gap-2"><TikTokIcon className="h-4 w-4" /> TikTok</Label>
                   <Input 
                     placeholder="@username" 
                     value={socialLinks.tiktok}
@@ -156,7 +158,7 @@ export default function ProfilePage() {
 
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={saving} size="lg" className="rounded-full px-8">
-          {saving ? <Loader2 className="animate-spin mr-2" /> : <Save className="mr-2 h-4 w-4" />}
+          {saving ? <Loader2 className="animate-spin mr-2" /> : <SaveIcon className="mr-2 h-4 w-4" />}
           Simpan Perubahan
         </Button>
       </div>

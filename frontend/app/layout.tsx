@@ -20,9 +20,7 @@ export default function RootLayout({
     <html lang="en">
       <body className={inter.className}>
         <AuthProvider>
-          <SidebarProvider>
             {children}
-          </SidebarProvider>
         </AuthProvider>
       </body>
     </html>
