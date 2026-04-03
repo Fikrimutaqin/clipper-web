@@ -214,46 +214,46 @@ export default function DashboardPage() {
       {/* Clipper Stats */}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             <div className="rounded-full bg-green-50 p-3 text-green-600">
               <Wallet className="h-6 w-6" />
             </div>
-            <div>
-              <p className="text-sm font-medium text-gray-500">Total Pendapatan</p>
-              <h3 className="text-2xl font-bold text-gray-900">Rp {stats.totalEarnings.toLocaleString("id-ID")}</h3>
+            <div className="flex flex-col flex-wrap">
+              <p className="text-sm font-medium text-gray-500 text-wrap">Total Pendapatan</p>
+              <h3 className="text-2xl font-bold text-gray-900 text-wrap">Rp {stats.totalEarnings.toLocaleString("id-ID")}</h3>
             </div>
           </div>
         </div>
         <div className="rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             <div className="rounded-full bg-orange-50 p-3 text-orange-600">
               <Clock className="h-6 w-6" />
             </div>
-            <div>
-              <p className="text-sm font-medium text-gray-500">Dana Tertahan</p>
-              <h3 className="text-2xl font-bold text-gray-900">Rp {stats.pendingPayments.toLocaleString("id-ID")}</h3>
+            <div className="flex flex-col flex-wrap">
+              <p className="text-sm font-medium text-gray-500 text-wrap">Dana Tertahan</p>
+              <h3 className="text-2xl font-bold text-gray-900 text-wrap">Rp {stats.pendingPayments.toLocaleString("id-ID")}</h3>
             </div>
           </div>
         </div>
         <div className="rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             <div className="rounded-full bg-blue-50 p-3 text-blue-600">
               <CheckCircle2 className="h-6 w-6" />
             </div>
-            <div>
-              <p className="text-sm font-medium text-gray-500">Pekerjaan Selesai</p>
-              <h3 className="text-2xl font-bold text-gray-900">{stats.totalClips}</h3>
+            <div className="flex flex-col flex-wrap">
+              <p className="text-sm font-medium text-gray-500 text-wrap">Pekerjaan Selesai</p>
+              <h3 className="text-2xl font-bold text-gray-900 text-wrap">{stats.totalClips}</h3>
             </div>
           </div>
         </div>
         <div className="rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             <div className="rounded-full bg-purple-50 p-3 text-purple-600">
               <TrendingUp className="h-6 w-6" />
             </div>
-            <div>
-              <p className="text-sm font-medium text-gray-500">Rating Performa</p>
-              <h3 className="text-2xl font-bold text-gray-900">4.9/5</h3>
+            <div className="flex flex-col flex-wrap">
+              <p className="text-sm font-medium text-gray-500 text-wrap">Rating Performa</p>
+              <h3 className="text-2xl font-bold text-gray-900 text-wrap">4.9/5</h3>
             </div>
           </div>
         </div>
