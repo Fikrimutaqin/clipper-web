@@ -1,13 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from _database.db import get_db, User
+from _database.db import get_db, User, SessionLocal
 from core import create_access_token, settings, response_success
 from passlib.context import CryptContext
 import uuid
-from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import Optional
+from pydantic import BaseModel, EmailStr, Field
 from jose import JWTError, jwt
+from google_auth import google_login_flow, new_state, read_oauth_state
+from googleapiclient.discovery import build
+from urllib.parse import urlparse
 
 router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -33,7 +36,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     )
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
-        user_id: str = payload.get("sub")
+        user_id: str | None = payload.get("sub")
         if user_id is None:
             raise credentials_exception
     except JWTError:
@@ -42,6 +45,111 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     if user is None:
         raise credentials_exception
     return user
+
+def _safe_frontend_redirect(request: Request, redirect: str) -> str:
+    origin = request.headers.get("origin") or ""
+    referer = request.headers.get("referer") or ""
+    referer_origin = ""
+    if referer:
+        try:
+            rp = urlparse(referer)
+            if rp.scheme and rp.netloc:
+                referer_origin = f"{rp.scheme}://{rp.netloc}"
+        except Exception:
+            referer_origin = ""
+
+    safe_redirect = "/login"
+    if redirect.startswith("/"):
+        return redirect
+    try:
+        parsed = urlparse(redirect)
+        if parsed.scheme in {"http", "https"}:
+            if origin and redirect.startswith(origin):
+                safe_redirect = redirect
+            elif referer_origin and redirect.startswith(referer_origin):
+                safe_redirect = redirect
+            elif parsed.netloc == "localhost:3000":
+                safe_redirect = redirect
+    except Exception:
+        safe_redirect = "/login"
+    return safe_redirect
+
+
+@router.get("/google/connect")
+async def google_connect(request: Request, redirect: str = "/login"):
+    state = new_state()
+    safe_redirect = _safe_frontend_redirect(request, redirect)
+
+    payload = {"state": state, "redirect": safe_redirect, "purpose": "auth"}
+
+    from core import serializer
+    raw_state = serializer.dumps(payload)
+
+    base_url = str(request.base_url).rstrip("/")
+    redirect_uri = settings.google_redirect_uri or f"{base_url}/auth/google/callback"
+    flow = google_login_flow(state=state, redirect_uri=redirect_uri)
+    auth_url, _ = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent",
+    )
+
+    resp = RedirectResponse(url=auth_url, status_code=302)
+    resp.set_cookie("oauth_state", raw_state, httponly=True, samesite="lax")
+    return resp
+
+
+async def handle_google_login_callback(request: Request, state: str = "", code: str = ""):
+    payload = read_oauth_state(request)
+    expected_state = payload.get("state")
+    redirect_url = payload.get("redirect") or "/login"
+    if not expected_state or not state or state != expected_state:
+        raise HTTPException(status_code=400, detail="OAuth state tidak valid")
+    if not code:
+        raise HTTPException(status_code=400, detail="OAuth code tidak ditemukan")
+
+    base_url = str(request.base_url).rstrip("/")
+    redirect_uri = settings.google_redirect_uri or f"{base_url}/auth/google/callback"
+    flow = google_login_flow(state=state, redirect_uri=redirect_uri)
+    flow.fetch_token(code=code)
+    creds = flow.credentials
+
+    try:
+        oauth2 = build("oauth2", "v2", credentials=creds)
+        info = oauth2.userinfo().get().execute()
+    except Exception:
+        raise HTTPException(status_code=500, detail="Gagal mengambil data user dari Google")
+
+    email = (info.get("email") or "").strip().lower()
+    full_name = (info.get("name") or "").strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="Google account tidak memiliki email")
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            user_id = str(uuid.uuid4())
+            random_password = uuid.uuid4().hex
+            user = User(
+                id=user_id,
+                email=email,
+                hashed_password=pwd_context.hash(random_password),
+                full_name=full_name or email.split("@")[0],
+                role="OWNER",
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+    finally:
+        db.close()
+
+    access_token = create_access_token(data={"sub": user.id, "role": user.role})
+    sep = "&" if "?" in redirect_url else "?"
+    target = f"{redirect_url}{sep}token={access_token}"
+    resp = RedirectResponse(url=target, status_code=302)
+    resp.set_cookie("oauth_state", "", httponly=True, samesite="lax")
+    return resp
 
 @router.post("/register")
 async def register(user_in: UserRegister, db: Session = Depends(get_db)):

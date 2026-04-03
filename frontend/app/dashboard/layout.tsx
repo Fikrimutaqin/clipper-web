@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/context/AuthContext";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { 
   LayoutDashboard, 
   Scissors, 
@@ -11,9 +11,11 @@ import {
   PlusCircle, 
   Wallet,
   Briefcase,
-  TrendingUp
+  TrendingUp,
+  Bell
 } from "lucide-react";
 import Link from "next/link";
+import api from "@/lib/axios";
 import {
   Sidebar,
   SidebarContent,
@@ -40,12 +42,38 @@ export default function DashboardLayout({
   const { user, loading, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     if (!loading && !user) {
       router.push("/login");
     }
   }, [user, loading, router]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const refresh = async () => {
+      try {
+        const res = await api.get("/api/marketplace/notifications");
+        setUnreadCount(res.data?.meta?.unread_count || 0);
+      } catch {
+        setUnreadCount(0);
+      }
+    };
+
+    const onUpdated = () => {
+      refresh();
+    };
+
+    refresh();
+    const interval = window.setInterval(refresh, 20000);
+    window.addEventListener("clipfix:notifications-updated", onUpdated as any);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("clipfix:notifications-updated", onUpdated as any);
+    };
+  }, [user, pathname]);
 
   if (loading || !user) {
     return (
@@ -106,6 +134,9 @@ export default function DashboardLayout({
               <SidebarMenu>
                 {navItems.map((item) => (
                   <SidebarMenuItem key={item.href}>
+                    {(() => {
+                      const badgeCount = (item as any).badgeCount as number | undefined;
+                      return (
                     <SidebarMenuButton
                       asChild
                       isActive={item.href === pathname}
@@ -117,9 +148,16 @@ export default function DashboardLayout({
                     >
                       <Link href={item.href} className="flex items-center gap-3">
                         <item.icon className="h-4 w-4" />
-                        <span>{item.label}</span>
+                        <span className="flex-1">{item.label}</span>
+                        {typeof badgeCount === "number" && badgeCount > 0 ? (
+                          <span className="ml-auto rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-bold">
+                            {badgeCount}
+                          </span>
+                        ) : null}
                       </Link>
                     </SidebarMenuButton>
+                      );
+                    })()}
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>
@@ -173,12 +211,26 @@ export default function DashboardLayout({
             <div className="min-w-0">
               <p className="truncate text-sm font-bold text-gray-900">Welcome back, {user.full_name}!</p>
             </div>
-            <button
-              onClick={() => router.push("/dashboard/profile")}
-              className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold"
-            >
-              {user.full_name.charAt(0)}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => router.push("/dashboard/notifications")}
+                className="relative h-9 w-9 rounded-full border bg-white flex items-center justify-center text-gray-700 hover:bg-gray-50"
+                aria-label="Notifications"
+              >
+                <Bell className="h-4 w-4" />
+                {unreadCount > 0 ? (
+                  <span className="absolute -top-1 -right-1 h-5 min-w-5 rounded-full bg-primary px-1 text-[10px] font-bold text-white flex items-center justify-center">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                ) : null}
+              </button>
+              <button
+                onClick={() => router.push("/dashboard/profile")}
+                className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold"
+              >
+                {user.full_name.charAt(0)}
+              </button>
+            </div>
           </div>
         </header>
         <main className="p-6 md:p-8">{children}</main>

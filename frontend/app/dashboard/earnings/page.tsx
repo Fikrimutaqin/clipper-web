@@ -17,17 +17,27 @@ import { Button } from "@/components/ui/button";
 import api from "@/lib/axios";
 
 interface Transaction {
-  id: string;
+  job_id: string;
   title: string;
   amount: number;
   status: string;
   payment_status: string;
-  date: number;
+  created_at: number;
+  updated_at: number;
+}
+
+interface WithdrawalItem {
+  id: number;
+  amount: number;
+  status: string;
+  created_at: number;
 }
 
 export default function EarningsPage() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<"ALL" | "RELEASED" | "ESCROW_HOLD">("ALL");
+  const [withdrawing, setWithdrawing] = useState(false);
   const [stats, setStats] = useState({
     totalEarned: 0,
     pendingEscrow: 0,
@@ -35,46 +45,90 @@ export default function EarningsPage() {
     completedJobs: 0
   });
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [withdrawals, setWithdrawals] = useState<WithdrawalItem[]>([]);
+
+  const exportCsv = () => {
+    const header = ["job_id", "title", "amount", "status", "payment_status", "created_at", "updated_at"];
+    const rows = transactions.map((t) => [
+      t.job_id,
+      (t.title || "").replaceAll("\"", "\"\""),
+      String(t.amount ?? 0),
+      t.status || "",
+      t.payment_status || "",
+      new Date((t.created_at || 0) * 1000).toISOString(),
+      new Date((t.updated_at || 0) * 1000).toISOString(),
+    ]);
+    const csv = [header.join(","), ...rows.map((r) => r.map((v) => `"${v}"`).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `clipfix_earnings_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportWithdrawalsCsv = () => {
+    const header = ["id", "amount", "status", "created_at"];
+    const rows = withdrawals.map((w) => [
+      String(w.id),
+      String(w.amount ?? 0),
+      w.status || "",
+      new Date((w.created_at || 0) * 1000).toISOString(),
+    ]);
+    const csv = [header.join(","), ...rows.map((r) => r.map((v) => `"${v}"`).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `clipfix_withdrawals_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const refreshAll = async () => {
+    const [summaryRes, historyRes, withdrawRes] = await Promise.all([
+      api.get("/api/earnings"),
+      api.get("/api/earnings/history", {
+        params: filter === "ALL" ? {} : { payment_status: filter },
+      }),
+      api.get("/api/earnings/withdraw/history", { params: { limit: 50 } }),
+    ]);
+
+    const summary = summaryRes.data.data;
+    setStats({
+      totalEarned: summary.total_released || 0,
+      pendingEscrow: summary.pending_escrow || 0,
+      readyToWithdraw: summary.ready_to_withdraw || 0,
+      completedJobs: summary.completed_jobs || 0,
+    });
+
+    setTransactions((historyRes.data.data || []) as Transaction[]);
+    setWithdrawals((withdrawRes.data.data || []) as WithdrawalItem[]);
+  };
+
+  const handleWithdrawAll = async () => {
+    if (stats.readyToWithdraw <= 0) return;
+    setWithdrawing(true);
+    try {
+      await api.post("/api/earnings/withdraw", { amount: stats.readyToWithdraw });
+      await refreshAll();
+      alert("Withdraw berhasil (simulasi).");
+    } catch (err: any) {
+      alert(err.response?.data?.detail || "Gagal withdraw.");
+    } finally {
+      setWithdrawing(false);
+    }
+  };
 
   useEffect(() => {
     const fetchEarnings = async () => {
       try {
-        const res = await api.get("/api/jobs/my-jobs");
-        const jobs = res.data.data;
-
-        // Filter only jobs that affect earnings
-        const earningsJobs = jobs.filter((j: any) => 
-          j.status === "COMPLETED" || j.payment_status === "ESCROW_HOLD"
-        );
-
-        const totalEarned = jobs
-          .filter((j: any) => j.payment_status === "RELEASED")
-          .reduce((acc: number, curr: any) => acc + curr.budget, 0);
-
-        const pending = jobs
-          .filter((j: any) => j.payment_status === "ESCROW_HOLD")
-          .reduce((acc: number, curr: any) => acc + curr.budget, 0);
-
-        const ready = jobs
-          .filter((j: any) => j.payment_status === "RELEASED") // Simplification: Released = Ready
-          .reduce((acc: number, curr: any) => acc + curr.budget, 0);
-
-        setStats({
-          totalEarned,
-          pendingEscrow: pending,
-          readyToWithdraw: ready,
-          completedJobs: jobs.filter((j: any) => j.status === "COMPLETED").length
-        });
-
-        setTransactions(jobs.map((j: any) => ({
-          id: j.id,
-          title: j.title,
-          amount: j.budget,
-          status: j.status,
-          payment_status: j.payment_status,
-          date: j.updated_at || j.created_at
-        })).sort((a: any, b: any) => b.date - a.date));
-
+        await refreshAll();
       } catch (err) {
         console.error("Failed to fetch earnings data", err);
       } finally {
@@ -84,7 +138,7 @@ export default function EarningsPage() {
 
     if (user?.role === "CLIPPER") fetchEarnings();
     else setLoading(false);
-  }, [user]);
+  }, [user, filter]);
 
   if (user?.role !== "CLIPPER") {
     return (
@@ -141,7 +195,14 @@ export default function EarningsPage() {
               <h3 className="text-xl font-bold text-gray-900">Rp {stats.readyToWithdraw.toLocaleString("id-ID")}</h3>
             </div>
           </div>
-          <Button className="w-full rounded-xl" variant="outline" size="sm">
+          <Button
+            className="w-full rounded-xl"
+            variant="outline"
+            size="sm"
+            onClick={handleWithdrawAll}
+            disabled={withdrawing || stats.readyToWithdraw <= 0}
+          >
+            {withdrawing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
             Tarik Saldo <ArrowUpRight className="ml-2 h-4 w-4" />
           </Button>
         </div>
@@ -151,9 +212,41 @@ export default function EarningsPage() {
       <div className="bg-white rounded-3xl border shadow-sm overflow-hidden">
         <div className="p-8 border-b flex items-center justify-between">
           <h3 className="text-lg font-bold text-gray-900">Riwayat Pendapatan</h3>
-          <Button variant="ghost" size="sm" className="text-xs font-bold text-primary">
-            <Download className="h-4 w-4 mr-2" /> Download Report (PDF)
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant={filter === "ALL" ? "default" : "outline"}
+              size="sm"
+              className="rounded-full text-xs"
+              onClick={() => setFilter("ALL")}
+            >
+              Semua
+            </Button>
+            <Button
+              variant={filter === "RELEASED" ? "default" : "outline"}
+              size="sm"
+              className="rounded-full text-xs"
+              onClick={() => setFilter("RELEASED")}
+            >
+              Released
+            </Button>
+            <Button
+              variant={filter === "ESCROW_HOLD" ? "default" : "outline"}
+              size="sm"
+              className="rounded-full text-xs"
+              onClick={() => setFilter("ESCROW_HOLD")}
+            >
+              Escrow Hold
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs font-bold text-primary"
+              onClick={exportCsv}
+              disabled={transactions.length === 0}
+            >
+              <Download className="h-4 w-4 mr-2" /> Export CSV
+            </Button>
+          </div>
         </div>
         
         <div className="overflow-x-auto">
@@ -169,13 +262,13 @@ export default function EarningsPage() {
             </thead>
             <tbody className="divide-y">
               {transactions.length > 0 ? transactions.map((t) => (
-                <tr key={t.id} className="hover:bg-gray-50 transition-colors group">
+                <tr key={t.job_id} className="hover:bg-gray-50 transition-colors group">
                   <td className="px-8 py-6">
                     <p className="font-bold text-gray-900 group-hover:text-primary transition-colors">{t.title}</p>
-                    <p className="text-[10px] text-gray-400 font-mono">ID: {t.id.slice(0,8)}</p>
+                    <p className="text-[10px] text-gray-400 font-mono">ID: {t.job_id.slice(0,8)}</p>
                   </td>
                   <td className="px-8 py-6 text-sm text-gray-500">
-                    {new Date(t.date * 1000).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}
+                    {new Date((t.updated_at || t.created_at) * 1000).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}
                   </td>
                   <td className="px-8 py-6">
                     <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
@@ -213,6 +306,62 @@ export default function EarningsPage() {
                 <tr>
                   <td colSpan={5} className="px-8 py-20 text-center text-gray-400 italic">
                     Belum ada riwayat pendapatan yang tercatat.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-3xl border shadow-sm overflow-hidden">
+        <div className="p-8 border-b flex items-center justify-between">
+          <h3 className="text-lg font-bold text-gray-900">Riwayat Withdraw</h3>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs font-bold text-primary"
+            onClick={exportWithdrawalsCsv}
+            disabled={withdrawals.length === 0}
+          >
+            <Download className="h-4 w-4 mr-2" /> Export CSV
+          </Button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-gray-50 text-gray-500 text-[10px] uppercase tracking-widest font-bold">
+                <th className="px-8 py-4">ID</th>
+                <th className="px-8 py-4">Tanggal</th>
+                <th className="px-8 py-4">Status</th>
+                <th className="px-8 py-4 text-right">Jumlah</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {withdrawals.length > 0 ? withdrawals.map((w) => (
+                <tr key={w.id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-8 py-6">
+                    <p className="text-sm font-bold text-gray-900">#{w.id}</p>
+                  </td>
+                  <td className="px-8 py-6 text-sm text-gray-500">
+                    {new Date(w.created_at * 1000).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  </td>
+                  <td className="px-8 py-6">
+                    <span className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-green-50 text-green-600">
+                      {w.status}
+                    </span>
+                  </td>
+                  <td className="px-8 py-6 text-right">
+                    <p className="font-bold text-gray-900 flex items-center justify-end">
+                      <ArrowDownLeft className="h-4 w-4 text-green-500 mr-1" />
+                      Rp {w.amount.toLocaleString("id-ID")}
+                    </p>
+                  </td>
+                </tr>
+              )) : (
+                <tr>
+                  <td colSpan={4} className="px-8 py-20 text-center text-gray-400 italic">
+                    Belum ada riwayat withdraw.
                   </td>
                 </tr>
               )}

@@ -32,6 +32,8 @@ interface Clipper {
   id: string;
   full_name: string;
   avatar_url?: string;
+  rating_avg?: number | null;
+  rating_count?: number;
   portfolio: {
     bio: string;
     social_links: {
@@ -192,8 +194,17 @@ export default function MarketplacePage() {
                 <div>
                   <h3 className="text-lg font-bold text-gray-900 group-hover:text-primary transition-colors">{clipper.full_name}</h3>
                   <div className="flex items-center justify-center gap-1 text-orange-400 mt-1">
-                    {[...Array(5)].map((_, i) => <Star key={i} className="h-3 w-3 fill-current" />)}
-                    <span className="text-xs text-gray-500 ml-1">(5.0)</span>
+                    {[...Array(5)].map((_, i) => (
+                      <Star
+                        key={i}
+                        className={`h-3 w-3 ${typeof clipper.rating_avg === "number" && i < Math.round(clipper.rating_avg) ? "fill-current" : ""}`}
+                      />
+                    ))}
+                    <span className="text-xs text-gray-500 ml-1">
+                      {typeof clipper.rating_avg === "number"
+                        ? `(${clipper.rating_avg.toFixed(1)} • ${clipper.rating_count || 0})`
+                        : "(New)"}
+                    </span>
                   </div>
                 </div>
 

@@ -17,9 +17,11 @@ import {
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import api from "@/lib/axios";
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { user } = useAuth();
   const [stats, setStats] = useState({
     totalClips: 0,
@@ -29,14 +31,21 @@ export default function DashboardPage() {
     openJobs: 0
   });
   const [recentJobs, setRecentJobs] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [markingAll, setMarkingAll] = useState(false);
+  const [markingId, setMarkingId] = useState<number | null>(null);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
-        const jobsRes = await api.get("/api/jobs/my-jobs");
+        const [jobsRes, notifsRes] = await Promise.all([
+          api.get("/api/jobs/my-jobs"),
+          api.get("/api/marketplace/notifications"),
+        ]);
         const jobs = jobsRes.data.data;
         setRecentJobs(jobs.slice(0, 3));
+        setNotifications(notifsRes.data.data || []);
 
         if (user?.role === "OWNER") {
           setStats({
@@ -69,6 +78,48 @@ export default function DashboardPage() {
 
     if (user) fetchDashboardData();
   }, [user]);
+
+  const markRead = async (id: number) => {
+    setMarkingId(id);
+    try {
+      await api.post(`/api/marketplace/notifications/${id}/read`);
+      const res = await api.get("/api/marketplace/notifications");
+      setNotifications(res.data.data || []);
+      window.dispatchEvent(new Event("clipfix:notifications-updated"));
+    } finally {
+      setMarkingId(null);
+    }
+  };
+
+  const markAllRead = async () => {
+    setMarkingAll(true);
+    try {
+      await api.post("/api/marketplace/notifications/read-all");
+      const res = await api.get("/api/marketplace/notifications");
+      setNotifications(res.data.data || []);
+      window.dispatchEvent(new Event("clipfix:notifications-updated"));
+    } finally {
+      setMarkingAll(false);
+    }
+  };
+
+  const openNotification = async (n: any) => {
+    if (!n.read_at) {
+      await markRead(n.id);
+    }
+    const jobId = n.meta?.job_id;
+    if (jobId) {
+      router.push(`/dashboard/jobs/${jobId}`);
+      return;
+    }
+    const clipperId = n.meta?.clipper_id;
+    if (clipperId) {
+      router.push(`/dashboard/clippers/${clipperId}`);
+      return;
+    } else {
+      router.push("/dashboard/notifications");
+    }
+  };
 
   const OwnerDashboard = () => (
     <div className="space-y-8">
@@ -163,46 +214,46 @@ export default function DashboardPage() {
       {/* Clipper Stats */}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             <div className="rounded-full bg-green-50 p-3 text-green-600">
               <Wallet className="h-6 w-6" />
             </div>
-            <div>
-              <p className="text-sm font-medium text-gray-500">Total Pendapatan</p>
-              <h3 className="text-2xl font-bold text-gray-900">Rp {stats.totalEarnings.toLocaleString("id-ID")}</h3>
+            <div className="flex flex-col flex-wrap">
+              <p className="text-sm font-medium text-gray-500 text-wrap">Total Pendapatan</p>
+              <h3 className="text-2xl font-bold text-gray-900 text-wrap">Rp {stats.totalEarnings.toLocaleString("id-ID")}</h3>
             </div>
           </div>
         </div>
         <div className="rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             <div className="rounded-full bg-orange-50 p-3 text-orange-600">
               <Clock className="h-6 w-6" />
             </div>
-            <div>
-              <p className="text-sm font-medium text-gray-500">Dana Tertahan</p>
-              <h3 className="text-2xl font-bold text-gray-900">Rp {stats.pendingPayments.toLocaleString("id-ID")}</h3>
+            <div className="flex flex-col flex-wrap">
+              <p className="text-sm font-medium text-gray-500 text-wrap">Dana Tertahan</p>
+              <h3 className="text-2xl font-bold text-gray-900 text-wrap">Rp {stats.pendingPayments.toLocaleString("id-ID")}</h3>
             </div>
           </div>
         </div>
         <div className="rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             <div className="rounded-full bg-blue-50 p-3 text-blue-600">
               <CheckCircle2 className="h-6 w-6" />
             </div>
-            <div>
-              <p className="text-sm font-medium text-gray-500">Pekerjaan Selesai</p>
-              <h3 className="text-2xl font-bold text-gray-900">{stats.totalClips}</h3>
+            <div className="flex flex-col flex-wrap">
+              <p className="text-sm font-medium text-gray-500 text-wrap">Pekerjaan Selesai</p>
+              <h3 className="text-2xl font-bold text-gray-900 text-wrap">{stats.totalClips}</h3>
             </div>
           </div>
         </div>
         <div className="rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             <div className="rounded-full bg-purple-50 p-3 text-purple-600">
               <TrendingUp className="h-6 w-6" />
             </div>
-            <div>
-              <p className="text-sm font-medium text-gray-500">Rating Performa</p>
-              <h3 className="text-2xl font-bold text-gray-900">4.9/5</h3>
+            <div className="flex flex-col flex-wrap">
+              <p className="text-sm font-medium text-gray-500 text-wrap">Rating Performa</p>
+              <h3 className="text-2xl font-bold text-gray-900 text-wrap">4.9/5</h3>
             </div>
           </div>
         </div>
@@ -267,8 +318,75 @@ export default function DashboardPage() {
       <div className="rounded-2xl border bg-white p-8 shadow-sm">
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-xl font-bold text-gray-900">Aktivitas Terbaru</h3>
-          <Link href="/dashboard/my-jobs" className="text-sm text-primary font-medium hover:underline">Lihat Semua</Link>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={markAllRead}
+              disabled={markingAll || notifications.filter((n: any) => !n.read_at).length === 0}
+              className="text-sm text-gray-500 hover:text-primary font-medium disabled:opacity-40"
+            >
+              {markingAll ? "..." : "Mark all read"}
+            </button>
+            <Link href="/dashboard/notifications" className="text-sm text-primary font-medium hover:underline">
+              Lihat Notifikasi
+            </Link>
+          </div>
         </div>
+
+        {notifications.length > 0 && (
+          <div className="space-y-3 mb-8">
+            {notifications.slice(0, 5).map((n: any) => {
+              const isUnread = !n.read_at;
+              const icon =
+                n.type?.includes("ESCROW") ? Wallet :
+                n.type?.includes("INVITE") ? Users :
+                n.type?.includes("APPROVED") ? CheckCircle2 :
+                n.type?.includes("REVISION") ? AlertCircle :
+                n.type?.includes("SUBMITTED") ? AlertCircle :
+                Briefcase;
+              const Icon = icon;
+              return (
+                <button
+                  key={n.id}
+                  onClick={() => openNotification(n)}
+                  className={`flex items-start justify-between gap-4 p-4 rounded-xl border ${
+                    isUnread ? "bg-blue-50 border-blue-100" : "bg-gray-50 border-gray-100"
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`mt-0.5 p-2 rounded-lg ${
+                      isUnread ? "bg-primary text-white" : "bg-white text-gray-600"
+                    }`}>
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-900">{n.message}</p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {new Date(n.created_at * 1000).toLocaleString("id-ID")}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isUnread ? (
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-primary">New</span>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        markRead(n.id);
+                      }}
+                      disabled={!isUnread || markingId === n.id}
+                      className="text-xs font-bold text-gray-500 hover:text-primary disabled:opacity-40"
+                    >
+                      {markingId === n.id ? "..." : "Read"}
+                    </button>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
         
         {recentJobs.length > 0 ? (
           <div className="space-y-4">
