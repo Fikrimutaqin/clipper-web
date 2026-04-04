@@ -646,7 +646,7 @@ export default function ClipperPage() {
           </div>
         ) : (
           videos.length === 0 ? (
-            <div className="bg-white rounded-2xl border p-8 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div className="bg-white rounded-2xl border p-8 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4 mt-3">
               <div className="space-y-1">
                 <p className="font-bold text-gray-900">Trending belum muncul</p>
                 <p className="text-sm text-gray-500">
