@@ -10,7 +10,7 @@ from googleapiclient.discovery import build
 from services.job_service import _download_youtube_task, DOWNLOAD_TASKS, _youtube_upload
 from _database.db import get_google_token, upsert_session
 from core import response_success, CLIPS_DIR, DOWNLOADS_DIR, serializer, settings
-from processing import pyav_trim, suggest_segments_from_file, extract_frame_jpeg
+from processing import pyav_trim, suggest_segments_from_file, extract_frame_jpeg, render_video_with_template
 from pydantic import BaseModel
 from typing import Optional
 from pathlib import Path
@@ -340,6 +340,58 @@ async def api_youtube_trim(req: TrimRequest, request: Request):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal memproses clip: {str(e)}")
+
+class SubtitleEntry(BaseModel):
+    start: float
+    end: float
+    text: str
+
+class TemplateConfigModel(BaseModel):
+    fontname: str = "Montserrat"
+    fontsize: str = "60"
+    primary_colour: str = "FFFFFF"
+    outline_colour: str = "000000"
+    outline: int = 4
+    shadow: int = 1
+    alignment: int = 2
+    margin_v: int = 200
+    uppercase: bool = True
+    entries: list[SubtitleEntry] = []
+
+class RenderRequest(BaseModel):
+    clip_id: str
+    template: TemplateConfigModel
+
+@router.post("/render-template")
+async def api_render_template(req: RenderRequest, request: Request):
+    input_path = CLIPS_DIR / f"{req.clip_id}.mp4"
+    if not input_path.exists():
+        raise HTTPException(status_code=404, detail="Original clip tidak ditemukan")
+        
+    # Buat filename final_xxx untuk membedakan dengan klip sumber textless
+    final_clip_id = f"final_{req.clip_id}"
+    output_path = CLIPS_DIR / f"{final_clip_id}.mp4"
+    
+    try:
+        await asyncio.to_thread(
+            render_video_with_template,
+            input_video=str(input_path),
+            output_video=str(output_path),
+            template_config=req.template.dict()
+        )
+        
+        clip_path = f"/api/jobs/clips/{final_clip_id}.mp4"
+        base_url = str(request.base_url).rstrip("/")
+        return response_success(
+            data={
+                "clip_id": final_clip_id,
+                "url": clip_path,
+                "full_url": f"{base_url}{clip_path}"
+            },
+            message="Video berhasil di-render dengan template styling."
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gagal merender template: {str(e)}")
 
 @router.get("/suggest/{task_id}")
 async def api_youtube_suggest(task_id: str, format_type: str = "short"):

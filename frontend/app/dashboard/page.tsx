@@ -1,10 +1,10 @@
 "use client";
 
 import { useAuth } from "@/context/AuthContext";
-import { 
-  Video, 
-  PlusCircle, 
-  ShoppingBag, 
+import {
+  Video,
+  PlusCircle,
+  ShoppingBag,
   ArrowRight,
   TrendingUp,
   Clock,
@@ -60,7 +60,7 @@ export default function DashboardPage() {
           const completedJobs = jobs.filter((j: any) => j.status === "COMPLETED");
           const totalEarned = completedJobs.reduce((acc: number, curr: any) => acc + curr.budget, 0);
           const pending = jobs.filter((j: any) => j.payment_status === "ESCROW_HOLD").reduce((acc: number, curr: any) => acc + curr.budget, 0);
-          
+
           setStats({
             totalClips: completedJobs.length,
             activeJobs: jobs.filter((j: any) => ["IN_PROGRESS", "REVIEW"].includes(j.status)).length,
@@ -212,7 +212,7 @@ export default function DashboardPage() {
   const ClipperDashboard = () => (
     <div className="space-y-8">
       {/* Clipper Stats */}
-      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+      {/* <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl border bg-white p-6 shadow-sm">
           <div className="flex items-center gap-2">
             <div className="rounded-full bg-green-50 p-3 text-green-600">
@@ -257,10 +257,10 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
-      </div>
+      </div> */}
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-        <div className="rounded-2xl border bg-white p-8 shadow-sm">
+        {/* <div className="rounded-2xl border bg-white p-8 shadow-sm">
           <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
             <ShoppingBag className="h-5 w-5 text-primary" /> Cari Pekerjaan?
           </h3>
@@ -275,7 +275,7 @@ export default function DashboardPage() {
               </Button>
             </Link>
           </div>
-        </div>
+        </div> */}
 
         <div className="rounded-2xl border bg-white p-8 shadow-sm">
           <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
@@ -308,14 +308,17 @@ export default function DashboardPage() {
         <div className="flex h-64 items-center justify-center">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
         </div>
-      ) : user?.role === "OWNER" ? (
-        <OwnerDashboard />
-      ) : (
-        <ClipperDashboard />
-      )}
+        // ) : user?.role === "OWNER" ? (
+        //   <OwnerDashboard />
+        // ) : (
+        //   <ClipperDashboard />
+        // )
+
+      ) : <ClipperDashboard />
+      }
 
       {/* Shared Recent Activity Section */}
-      <div className="rounded-2xl border bg-white p-8 shadow-sm">
+      {/* <div className="rounded-2xl border bg-white p-8 shadow-sm">
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-xl font-bold text-gray-900">Aktivitas Terbaru</h3>
           <div className="flex items-center gap-4">
@@ -338,24 +341,22 @@ export default function DashboardPage() {
               const isUnread = !n.read_at;
               const icon =
                 n.type?.includes("ESCROW") ? Wallet :
-                n.type?.includes("INVITE") ? Users :
-                n.type?.includes("APPROVED") ? CheckCircle2 :
-                n.type?.includes("REVISION") ? AlertCircle :
-                n.type?.includes("SUBMITTED") ? AlertCircle :
-                Briefcase;
+                  n.type?.includes("INVITE") ? Users :
+                    n.type?.includes("APPROVED") ? CheckCircle2 :
+                      n.type?.includes("REVISION") ? AlertCircle :
+                        n.type?.includes("SUBMITTED") ? AlertCircle :
+                          Briefcase;
               const Icon = icon;
               return (
                 <button
                   key={n.id}
                   onClick={() => openNotification(n)}
-                  className={`flex items-start justify-between gap-4 p-4 rounded-xl border ${
-                    isUnread ? "bg-blue-50 border-blue-100" : "bg-gray-50 border-gray-100"
-                  }`}
+                  className={`flex items-start justify-between gap-4 p-4 rounded-xl border ${isUnread ? "bg-blue-50 border-blue-100" : "bg-gray-50 border-gray-100"
+                    }`}
                 >
                   <div className="flex items-start gap-3">
-                    <div className={`mt-0.5 p-2 rounded-lg ${
-                      isUnread ? "bg-primary text-white" : "bg-white text-gray-600"
-                    }`}>
+                    <div className={`mt-0.5 p-2 rounded-lg ${isUnread ? "bg-primary text-white" : "bg-white text-gray-600"
+                      }`}>
                       <Icon className="h-4 w-4" />
                     </div>
                     <div className="min-w-0">
@@ -387,17 +388,16 @@ export default function DashboardPage() {
             })}
           </div>
         )}
-        
+
         {recentJobs.length > 0 ? (
           <div className="space-y-4">
             {recentJobs.map((job) => (
               <div key={job.id} className="flex items-center justify-between p-4 rounded-xl bg-gray-50 border border-gray-100">
                 <div className="flex items-center gap-4">
-                  <div className={`p-2 rounded-lg ${
-                    job.status === 'COMPLETED' ? 'bg-green-100 text-green-600' :
-                    job.status === 'IN_PROGRESS' ? 'bg-orange-100 text-orange-600' :
-                    'bg-blue-100 text-blue-600'
-                  }`}>
+                  <div className={`p-2 rounded-lg ${job.status === 'COMPLETED' ? 'bg-green-100 text-green-600' :
+                      job.status === 'IN_PROGRESS' ? 'bg-orange-100 text-orange-600' :
+                        'bg-blue-100 text-blue-600'
+                    }`}>
                     <Briefcase className="h-5 w-5" />
                   </div>
                   <div>
@@ -420,7 +420,7 @@ export default function DashboardPage() {
             <p className="mt-4 text-gray-500">Belum ada aktivitas terbaru saat ini.</p>
           </div>
         )}
-      </div>
+      </div> */}
     </div>
   );
 }

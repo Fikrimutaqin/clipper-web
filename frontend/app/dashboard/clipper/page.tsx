@@ -32,6 +32,33 @@ const PLATFORM_CARDS = [
   { key: "FB", label: "Facebook", icon: "👥", bg: "bg-blue-50", desc: "Share ke Facebook Page & Reels", available: false },
 ];
 
+const VIRAL_TEMPLATES = [
+  {
+    id: "mrbeast",
+    name: "🔥 MrBeast Style",
+    desc: "Kuning tebal, outline besar (Bangers)",
+    config: { fontname: "Bangers", primary_colour: "00FFFF", outline_colour: "000000", fontsize: "90", outline: 8, margin_v: 250, uppercase: true, shadow: 0 }
+  },
+  {
+    id: "podcast",
+    name: "🎙 Podcast Clean",
+    desc: "Elegan, putih, font modern (Montserrat)",
+    config: { fontname: "Montserrat", primary_colour: "FFFFFF", outline_colour: "000000", fontsize: "70", outline: 3, margin_v: 150, uppercase: false, shadow: 0 }
+  },
+  {
+    id: "motivational",
+    name: "🎯 Motivational Quotes",
+    desc: "Teks besar di tengah untuk emosi",
+    config: { fontname: "Montserrat", primary_colour: "FFFFFF", outline_colour: "000000", fontsize: "80", outline: 4, margin_v: 960, uppercase: true, shadow: 0 }
+  },
+  {
+    id: "chat_story",
+    name: "💬 Chat Story",
+    desc: "Hijau ala iMessage",
+    config: { fontname: "Montserrat", primary_colour: "00FF00", outline_colour: "000000", fontsize: "65", outline: 3, margin_v: 200, uppercase: false, shadow: 0 }
+  }
+];
+
 const fmtSec = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const toNum = (v: string, fb: number) => { const n = Number(v); return isFinite(n) ? n : fb; };
@@ -116,7 +143,21 @@ export default function ClipperPage() {
   const [subtitleData, setSubtitleData] = useState<{ available: boolean; entries: any[]; } | null>(null);
   const [loadingSubs, setLoadingSubs] = useState(false);
 
-  // Step 5 – Export
+  // Step 5 – Template Editor
+  const [templateConfig, setTemplateConfig] = useState({
+    fontname: "Montserrat",
+    primary_colour: "FFFFFF",
+    outline_colour: "000000",
+    fontsize: "80",
+    outline: 5,
+    margin_v: 200,
+    uppercase: true,
+    shadow: 0.2
+  });
+  const [renderingTemplate, setRenderingTemplate] = useState(false);
+  const [activeOverlayText, setActiveOverlayText] = useState("");
+
+  // Step 6 – Export
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<{ url: string; youtube_video_id: string } | null>(null);
   const [activeJobs, setActiveJobs] = useState<any[]>([]);
@@ -159,7 +200,7 @@ export default function ClipperPage() {
       setClipResult({ clip_id: clipExportId, url: exportUrl, full_url: exportUrl });
       setUploadTitle(exportFilename.replace(/\.mp4$/i, ""));
       setUploadDesc("Diposting secara otomatis melalui ClipFIX AI! 🔥 #shorts #viral");
-      setWizardStep(5);
+      setWizardStep(6);
       return;
     }
 
@@ -226,7 +267,7 @@ export default function ClipperPage() {
     // 2. Warn on client-side navigation (Links & Buttons)
     const handleNavigationClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      
+
       // Is it a sidebar link or a button outside the editor?
       const anchor = target.closest("a");
       const isExternalLink = anchor && anchor.getAttribute("target") === "_blank";
@@ -235,7 +276,7 @@ export default function ClipperPage() {
 
       // Intercept profile button or any external anchor
       const isOutsideButton = target.closest('[role="button"]') && !target.closest('#clip-editor');
-      
+
       if (isExternalLink || isSamePage) return;
 
       if ((anchor && href) || isOutsideButton) {
@@ -387,6 +428,46 @@ export default function ClipperPage() {
       setSubtitleData(res.data.data);
     } catch { setSubtitleData({ available: false, entries: [] }); }
     finally { setLoadingSubs(false); }
+  };
+
+  // const setUploadDesc = (desc: string) => {
+  //   // ... existing logic
+  // };
+
+  const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+    if (!subtitleData || !subtitleData.entries) return;
+    const time = (e.target as HTMLVideoElement).currentTime;
+    const currentSub = subtitleData.entries.find((s: any) => time >= s.start && time <= s.end);
+    if (currentSub) {
+      setActiveOverlayText(templateConfig.uppercase ? currentSub.text.toUpperCase() : currentSub.text);
+    } else {
+      setActiveOverlayText("");
+    }
+  };
+
+  const handleRenderTemplate = async () => {
+    if (!clipResult) return;
+    setRenderingTemplate(true);
+    try {
+      const resp = await api.post("/api/youtube/render-template", {
+        clip_id: clipResult.clip_id,
+        template: {
+          ...templateConfig,
+          entries: subtitleData?.entries || []
+        }
+      });
+      // update clipResult to point to the new hardcoded video
+      setClipResult({
+        clip_id: resp.data.data.clip_id,
+        url: resp.data.data.url,
+        full_url: resp.data.data.full_url
+      });
+      setWizardStep(6);
+    } catch (e: any) {
+      alert(e.response?.data?.detail || "Gagal merender template video");
+    } finally {
+      setRenderingTemplate(false);
+    }
   };
 
   const handleUpload = async () => {
@@ -877,7 +958,7 @@ export default function ClipperPage() {
                       )
                     )}
                     <Button className="w-full rounded-xl gap-2" onClick={() => setWizardStep(5)}>
-                      Lanjut: Preview & Export 📤 <ChevronRight className="h-4 w-4" />
+                      Lanjut: Template & Styling 🎨 <ChevronRight className="h-4 w-4" />
                     </Button>
                     <button onClick={() => setWizardStep(3)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">
                       ← Kembali ke Content
@@ -885,8 +966,144 @@ export default function ClipperPage() {
                   </div>
                 )}
 
-                {/* ── STEP 5: Export ── */}
+                {/* ── STEP 5: Template Customizer ── */}
                 {wizardStep === 5 && (
+                  <div className="max-w-2xl space-y-5">
+                    <div>
+                      <h2 className="text-xl font-bold flex items-center gap-2">🎨 Template Customizer</h2>
+                      <p className="text-sm text-gray-500 mt-0.5">Atur tampilan subtitle viral dan efek rendering.</p>
+                    </div>
+
+                    {/* Template Library Selection */}
+                    <div className="space-y-3">
+                      <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Pilih Template Viral (Preset)</label>
+                      <div className="grid grid-cols-2 gap-3">
+                        {VIRAL_TEMPLATES.map((tmpl) => {
+                           // check if active by comparing config partially
+                           const isActive = templateConfig.fontname === tmpl.config.fontname && templateConfig.primary_colour === tmpl.config.primary_colour && templateConfig.fontsize === tmpl.config.fontsize;
+                           return (
+                             <div 
+                               key={tmpl.id} 
+                               onClick={() => setTemplateConfig({...templateConfig, ...tmpl.config})}
+                               className={`border-2 rounded-xl p-3 cursor-pointer hover:shadow-sm transition-all ${isActive ? 'border-violet-500 bg-violet-50' : 'border-gray-200 bg-white hover:border-violet-300'}`}
+                             >
+                               <div className={`font-bold text-sm ${isActive ? 'text-violet-700' : 'text-gray-800'}`}>{tmpl.name}</div>
+                               <div className="text-[10px] text-gray-500 mt-0.5 leading-snug">{tmpl.desc}</div>
+                             </div>
+                           );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Live Preview Video player */}
+                    {clipUrl && (
+                      <div className="relative rounded-2xl overflow-hidden border shadow-lg bg-black group max-w-[300px] mx-auto">
+                        <video src={clipUrl} controls onTimeUpdate={handleTimeUpdate} className="w-full h-auto aspect-[9/16] object-cover" />
+
+                        {/* CSS Live Subtitle Overlay */}
+                        {activeOverlayText && (
+                          <div
+                            className="absolute z-10 w-full flex justify-center text-center px-4 pointer-events-none transition-all duration-100 ease-linear"
+                            style={{
+                              bottom: `${parseInt(templateConfig.margin_v.toString()) / 19.2}%`,
+                              fontFamily: templateConfig.fontname === "Bangers" ? '"Bangers", cursive' : '"Montserrat", sans-serif',
+                              fontSize: `${parseInt(templateConfig.fontsize) / 3}px`,
+                              fontWeight: 900,
+                              color: `#${templateConfig.primary_colour}`,
+                              WebkitTextStroke: `${templateConfig.outline / 2}px #${templateConfig.outline_colour}`,
+                              textShadow: templateConfig.shadow ? `2px 2px 0px #${templateConfig.outline_colour}` : 'none',
+                              lineHeight: 1.1
+                            }}
+                          >
+                            {activeOverlayText}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Controls */}
+                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 bg-gray-50 p-4 rounded-xl border">
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-gray-600">Pilih Font</label>
+                        <select
+                          className="w-full rounded-lg text-sm border-gray-300"
+                          value={templateConfig.fontname}
+                          onChange={(e) => setTemplateConfig({ ...templateConfig, fontname: e.target.value })}
+                        >
+                          <option value="Montserrat">Modern (Montserrat)</option>
+                          <option value="Bangers">MrBeast Style (Bangers)</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-gray-600">Warna Teks (Hex)</label>
+                        <Input
+                          className="rounded-lg text-sm"
+                          placeholder="FFFFFF"
+                          value={templateConfig.primary_colour}
+                          onChange={(e) => setTemplateConfig({ ...templateConfig, primary_colour: e.target.value.replace('#', '') })}
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-gray-600">Warna Border (Hex)</label>
+                        <Input
+                          className="rounded-lg text-sm"
+                          placeholder="000000"
+                          value={templateConfig.outline_colour}
+                          onChange={(e) => setTemplateConfig({ ...templateConfig, outline_colour: e.target.value.replace('#', '') })}
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-gray-600">Ukuran Teks (ASS)</label>
+                        <Input
+                          type="number"
+                          className="rounded-lg text-sm"
+                          value={templateConfig.fontsize}
+                          onChange={(e) => setTemplateConfig({ ...templateConfig, fontsize: e.target.value })}
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-gray-600">Tebal Outline</label>
+                        <Input
+                          type="number"
+                          className="rounded-lg text-sm"
+                          value={templateConfig.outline}
+                          onChange={(e) => setTemplateConfig({ ...templateConfig, outline: parseInt(e.target.value) || 0 })}
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-gray-600">Jarak dari Bawah (MarginV)</label>
+                        <Input
+                          type="number"
+                          className="rounded-lg text-sm"
+                          value={templateConfig.margin_v}
+                          onChange={(e) => setTemplateConfig({ ...templateConfig, margin_v: parseInt(e.target.value) || 0 })}
+                        />
+                      </div>
+                    </div>
+
+                    <Button
+                      className="w-full rounded-xl gap-2 bg-gradient-to-r from-violet-600 to-indigo-600"
+                      onClick={handleRenderTemplate}
+                      disabled={renderingTemplate}
+                    >
+                      {renderingTemplate ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                      {renderingTemplate ? "🔥 Rendering / Burning Subtitles..." : "🔥 Burn Subtitles & Render"}
+                    </Button>
+                    <button onClick={() => setWizardStep(4)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors w-full mt-2 text-left">
+                      ← Kembali ke Subtitles
+                    </button>
+
+                    <div className="text-xs text-center text-gray-400">Atau lewati styling subtitle: <button onClick={() => setWizardStep(6)} className="underline hover:text-gray-600">Buka halaman Export</button></div>
+                  </div>
+                )}
+
+                {/* ── STEP 6: Export ── */}
+                {wizardStep === 6 && (
                   <div className="max-w-2xl space-y-5">
                     <div>
                       <h2 className="text-xl font-bold flex items-center gap-2">📤 Preview & Export</h2>

@@ -519,3 +519,105 @@ def pyav_trim(
             out_c.close()
     finally:
         in_c.close()
+
+
+# ─── Template Rendering ───────────────────────────────────────────────────────
+
+import subprocess
+import tempfile
+import uuid
+
+def _time_to_ass(seconds: float) -> str:
+    h = int(seconds / 3600)
+    m = int((seconds % 3600) / 60)
+    s = seconds % 60
+    # ASS format: H:MM:SS.cc
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+def render_video_with_template(
+    input_video: str,
+    output_video: str,
+    template_config: dict
+) -> None:
+    """
+    Burn subtitles into a video using ASS format and ffmpeg subprocess.
+    template_config expects:
+    {
+      "fontname": "Montserrat",
+      "fontsize": "18",   (relative to video height if configured, or absolute)
+      "primary_colour": "00FFFF", # Hex BGR or RGB (script handles it if assuming BGR, standard hex is RGB but ASS wants BGR. Let's assume frontend sends Hex like FFFF00 (Yellow RGB))
+      "outline_colour": "000000",
+      "outline": 2,
+      "shadow": 0,
+      "alignment": 2, # 2=Bottom center, 5=Middle Center
+      "margin_v": 60,
+      "entries": [ { "start": 0.0, "end": 2.0, "text": "HELLO" }, ... ]
+    }
+    """
+    cfg = template_config
+    
+    # Simple color converter RGB -> ASS BGR format (&H00BBGGRR)
+    def c(hex_color: str) -> str:
+        h = hex_color.lstrip('#')
+        if len(h) != 6:
+            return "&H00FFFFFF"
+        # B G R
+        return f"&H00{h[4:6]}{h[2:4]}{h[0:2]}"
+    
+    ass_header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{cfg.get('fontname', 'Montserrat')},{cfg.get('fontsize', 80)},{c(cfg.get('primary_colour', 'FFFFFF'))},&H000000FF,{c(cfg.get('outline_colour', '000000'))},&H00000000,-1,0,0,0,100,100,0,0,1,{cfg.get('outline', 5)},{cfg.get('shadow', 0)},{cfg.get('alignment', 2)},10,10,{cfg.get('margin_v', 200)},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+    events = []
+    for entry in cfg.get("entries", []):
+        st = _time_to_ass(float(entry["start"]))
+        en = _time_to_ass(float(entry["end"]))
+        # Clean text, ASS uses \N for newlines
+        txt = str(entry["text"]).replace('\n', '\\N')
+        # Add basic uppercase enforcement if requested
+        if cfg.get("uppercase", True):
+            txt = txt.upper()
+        events.append(f"Dialogue: 0,{st},{en},Default,,0,0,0,,{txt}")
+    
+    ass_content = ass_header + "\n".join(events) + "\n"
+
+    # Write ASS to temp file
+    with tempfile.NamedTemporaryFile(suffix=".ass", mode="w", delete=False, encoding="utf-8") as f:
+        f.write(ass_content)
+        ass_path = f.name
+
+    try:
+        # Menentukan base font directory (kita buat fallback)
+        font_dir = Path(__file__).parent / "assets" / "fonts"
+        
+        import shutil
+        ffmpeg_bin = shutil.which("ffmpeg") or "ffmpeg"
+        
+        # FFmpeg command
+        cmd = [
+            ffmpeg_bin, "-y",
+            "-i", str(input_video),
+            "-vf", f"ass='{ass_path}':fontsdir='{font_dir}'",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-c:a", "copy",
+            str(output_video)
+        ]
+        
+        # Run ffmpeg
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise RuntimeError(f"FFmpeg render error: {proc.stderr}")
+    finally:
+        Path(ass_path).unlink(missing_ok=True)
+
