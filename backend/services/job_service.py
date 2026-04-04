@@ -26,6 +26,8 @@ def _download_youtube_task(task_id: str, url: str):
         if d['status'] == 'downloading':
             p_str = d.get('_percent_str', '0%')
             p_str = ansi_escape.sub('', p_str).replace('%', '').strip()
+            if task_id in DOWNLOAD_TASKS and DOWNLOAD_TASKS[task_id].get("status") == "merging":
+                DOWNLOAD_TASKS[task_id]["status"] = "downloading"
             try:
                 DOWNLOAD_TASKS[task_id]['progress'] = float(p_str)
             except Exception:
@@ -44,6 +46,11 @@ def _download_youtube_task(task_id: str, url: str):
         "nocheckcertificate": True,
         "no_warnings": True,
         "retries": 5,
+        # Auto-download subtitles (VTT) for subtitle step in clipper
+        "writesubtitles": True,
+        "writeautomaticsub": True,
+        "subtitleslangs": ["id", "en"],
+        "subtitlesformat": "vtt",
         "extractor_args": {
             "youtube": {
                 "player_client": ["android", "web", "ios"]
@@ -72,51 +79,76 @@ def _download_youtube_task(task_id: str, url: str):
             else:
                 raise
 
-            filepaths: list[Path] = []
-            reqs = info.get("requested_downloads") if isinstance(info, dict) else None
-            if isinstance(reqs, list):
-                for r in reqs:
-                    fp = (r or {}).get("filepath")
-                    if fp:
-                        filepaths.append(Path(fp))
-            if not filepaths:
+        filepaths: list[Path] = []
+        reqs = info.get("requested_downloads") if isinstance(info, dict) else None
+        if isinstance(reqs, list):
+            for r in reqs:
+                fp = (r or {}).get("filepath")
+                if fp:
+                    filepaths.append(Path(fp))
+        if not filepaths:
+            with YoutubeDL(ydl_opts) as ydl:
                 filepath = ydl.prepare_filename(info)
-                filepaths.append(Path(filepath))
+            filepaths.append(Path(filepath))
 
-            filepath = filepaths[0]
-            if len(filepaths) >= 2:
+        # ── Store metadata for title generation ────────────────────────────────
+        if isinstance(info, dict) and task_id in DOWNLOAD_TASKS:
+            DOWNLOAD_TASKS[task_id]["youtube_id"] = info.get("id", "")
+            DOWNLOAD_TASKS[task_id]["video_title"] = info.get("title", "")
+            DOWNLOAD_TASKS[task_id]["video_tags"] = info.get("tags", []) or []
+
+        filepath = filepaths[0]
+        if len(filepaths) >= 2:
+            if task_id in DOWNLOAD_TASKS:
                 DOWNLOAD_TASKS[task_id]["status"] = "merging"
-                v_path = filepaths[0]
-                a_path = filepaths[1]
-                merged_path = DOWNLOADS_DIR / f"dl_{task_id}_merged.mp4"
-                v_in = av.open(str(v_path))
-                a_in = av.open(str(a_path))
-                out = av.open(str(merged_path), mode="w")
-                try:
-                    v_stream = next((s for s in v_in.streams if s.type == "video"), None)
-                    a_stream = next((s for s in a_in.streams if s.type == "audio"), None)
-                    if v_stream is None:
-                        raise RuntimeError("Video stream tidak ditemukan saat merge download")
-                    out_v = out.add_stream(template=v_stream)
-                    out_a = out.add_stream(template=a_stream) if a_stream is not None else None
-                    for packet in v_in.demux(v_stream):
-                        if packet.dts is None:
-                            continue
-                        packet.stream = out_v
-                        out.mux(packet)
-                    if a_stream is not None and out_a is not None:
-                        for packet in a_in.demux(a_stream):
-                            if packet.dts is None:
-                                continue
-                            packet.stream = out_a
-                            out.mux(packet)
-                finally:
-                    out.close()
-                    v_in.close()
-                    a_in.close()
-                filepath = merged_path
-            DOWNLOAD_TASKS[task_id]['status'] = 'done'
-            DOWNLOAD_TASKS[task_id]['file_path'] = str(filepath)
+            v_path = filepaths[0]
+            a_path = filepaths[1]
+            merged_path = DOWNLOADS_DIR / f"dl_{task_id}_merged.mp4"
+            v_in = av.open(str(v_path))
+            a_in = av.open(str(a_path))
+            out = av.open(str(merged_path), mode="w")
+            try:
+                v_stream = next((s for s in v_in.streams if s.type == "video"), None)
+                a_stream = next((s for s in a_in.streams if s.type == "audio"), None)
+                if v_stream is None:
+                    raise RuntimeError("Video stream tidak ditemukan saat merge download")
+                out_v = out.add_stream(template=v_stream)
+                out_a = out.add_stream(template=a_stream) if a_stream is not None else None
+                
+                v_iter = v_in.demux(v_stream)
+                a_iter = a_in.demux(a_stream) if a_stream else None
+                
+                v_packet = next(v_iter, None)
+                a_packet = next(a_iter, None) if a_iter else None
+                
+                while v_packet is not None or a_packet is not None:
+                    if v_packet is not None and a_packet is not None:
+                        v_time = float(v_packet.dts * v_stream.time_base) if v_packet.dts is not None else float('inf')
+                        a_time = float(a_packet.dts * a_stream.time_base) if a_packet.dts is not None else float('inf')
+                        
+                        if v_time <= a_time:
+                            v_packet.stream = out_v
+                            out.mux(v_packet)
+                            v_packet = next(v_iter, None)
+                        else:
+                            a_packet.stream = out_a
+                            out.mux(a_packet)
+                            a_packet = next(a_iter, None)
+                    elif v_packet is not None:
+                        v_packet.stream = out_v
+                        out.mux(v_packet)
+                        v_packet = next(v_iter, None)
+                    elif a_packet is not None:
+                        a_packet.stream = out_a
+                        out.mux(a_packet)
+                        a_packet = next(a_iter, None)
+            finally:
+                out.close()
+                v_in.close()
+                a_in.close()
+            filepath = merged_path
+        DOWNLOAD_TASKS[task_id]['status'] = 'done'
+        DOWNLOAD_TASKS[task_id]['file_path'] = str(filepath)
     except Exception as e:
         DOWNLOAD_TASKS[task_id]['status'] = 'error'
         DOWNLOAD_TASKS[task_id]['error'] = str(e)

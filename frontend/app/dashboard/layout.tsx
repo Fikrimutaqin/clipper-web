@@ -3,16 +3,17 @@
 import { useAuth } from "@/context/AuthContext";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { 
-  LayoutDashboard, 
-  Scissors, 
-  ShoppingBag, 
-  LogOut, 
-  PlusCircle, 
+import {
+  LayoutDashboard,
+  Scissors,
+  ShoppingBag,
+  LogOut,
+  PlusCircle,
   Wallet,
   Briefcase,
   TrendingUp,
-  Bell
+  Bell,
+  Library
 } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/axios";
@@ -87,19 +88,20 @@ export default function DashboardLayout({
     { label: "Overview", icon: LayoutDashboard, href: "/dashboard" },
     ...(user.role === "OWNER"
       ? [
-          { label: "Post New Job", icon: PlusCircle, href: "/dashboard/post-job" },
-          { label: "Manage Jobs", icon: Briefcase, href: "/dashboard/my-jobs" },
-          { label: "Browse Clippers", icon: ShoppingBag, href: "/dashboard/marketplace" },
-        ]
+        { label: "Post New Job", icon: PlusCircle, href: "/dashboard/post-job" },
+        { label: "Manage Jobs", icon: Briefcase, href: "/dashboard/my-jobs" },
+        { label: "Browse Clippers", icon: ShoppingBag, href: "/dashboard/marketplace" },
+      ]
       : [
-          { label: "Marketplace", icon: ShoppingBag, href: "/dashboard/marketplace" },
-          { label: "My Jobs", icon: Briefcase, href: "/dashboard/my-jobs" },
-          { label: "Earnings", icon: Wallet, href: "/dashboard/earnings" },
-        ]),
+        { label: "Marketplace", icon: ShoppingBag, href: "/dashboard/marketplace" },
+        { label: "My Jobs", icon: Briefcase, href: "/dashboard/my-jobs" },
+        { label: "Earnings", icon: Wallet, href: "/dashboard/earnings" },
+      ]),
   ];
 
   const toolItems = [
     { label: "AI Clipper", icon: TrendingUp, href: "/dashboard/clipper" },
+    { label: "Media Library", icon: Library, href: "/dashboard/media" },
   ];
 
   return (
@@ -128,7 +130,7 @@ export default function DashboardLayout({
         <SidebarSeparator />
 
         <SidebarContent>
-          <SidebarGroup>
+          {/* <SidebarGroup>
             <SidebarGroupLabel>Navigation</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
@@ -162,7 +164,7 @@ export default function DashboardLayout({
                 ))}
               </SidebarMenu>
             </SidebarGroupContent>
-          </SidebarGroup>
+          </SidebarGroup> */}
 
           <SidebarGroup>
             <SidebarGroupLabel>Tools</SidebarGroupLabel>
