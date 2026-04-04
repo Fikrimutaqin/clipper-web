@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from itsdangerous import URLSafeSerializer
 
-ROOT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(__file__).resolve().parent.parent
 STORAGE_DIR = ROOT_DIR / "storage"
 UPLOADS_DIR = STORAGE_DIR / "uploads"
 DOWNLOADS_DIR = STORAGE_DIR / "downloads"

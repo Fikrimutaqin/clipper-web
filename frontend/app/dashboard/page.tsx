@@ -36,90 +36,90 @@ export default function DashboardPage() {
   const [markingAll, setMarkingAll] = useState(false);
   const [markingId, setMarkingId] = useState<number | null>(null);
 
-  useEffect(() => {
-    const fetchDashboardData = async () => {
-      try {
-        const [jobsRes, notifsRes] = await Promise.all([
-          api.get("/api/jobs/my-jobs"),
-          api.get("/api/marketplace/notifications"),
-        ]);
-        const jobs = jobsRes.data.data;
-        setRecentJobs(jobs.slice(0, 3));
-        setNotifications(notifsRes.data.data || []);
+  // useEffect(() => {
+  //   const fetchDashboardData = async () => {
+  //     try {
+  //       const [jobsRes, notifsRes] = await Promise.all([
+  //         api.get("/api/jobs/my-jobs"),
+  //         api.get("/api/marketplace/notifications"),
+  //       ]);
+  //       const jobs = jobsRes.data.data;
+  //       setRecentJobs(jobs.slice(0, 3));
+  //       setNotifications(notifsRes.data.data || []);
 
-        if (user?.role === "OWNER") {
-          setStats({
-            totalClips: jobs.filter((j: any) => j.status === "COMPLETED").length,
-            activeJobs: jobs.filter((j: any) => ["IN_PROGRESS", "REVIEW"].includes(j.status)).length,
-            totalEarnings: 0, // Owners don't earn, they pay
-            pendingPayments: jobs.filter((j: any) => j.payment_status === "ESCROW_HOLD").length,
-            openJobs: jobs.filter((j: any) => j.status === "OPEN").length
-          });
-        } else {
-          // Clipper Stats
-          const completedJobs = jobs.filter((j: any) => j.status === "COMPLETED");
-          const totalEarned = completedJobs.reduce((acc: number, curr: any) => acc + curr.budget, 0);
-          const pending = jobs.filter((j: any) => j.payment_status === "ESCROW_HOLD").reduce((acc: number, curr: any) => acc + curr.budget, 0);
+  //       if (user?.role === "OWNER") {
+  //         setStats({
+  //           totalClips: jobs.filter((j: any) => j.status === "COMPLETED").length,
+  //           activeJobs: jobs.filter((j: any) => ["IN_PROGRESS", "REVIEW"].includes(j.status)).length,
+  //           totalEarnings: 0, // Owners don't earn, they pay
+  //           pendingPayments: jobs.filter((j: any) => j.payment_status === "ESCROW_HOLD").length,
+  //           openJobs: jobs.filter((j: any) => j.status === "OPEN").length
+  //         });
+  //       } else {
+  //         // Clipper Stats
+  //         const completedJobs = jobs.filter((j: any) => j.status === "COMPLETED");
+  //         const totalEarned = completedJobs.reduce((acc: number, curr: any) => acc + curr.budget, 0);
+  //         const pending = jobs.filter((j: any) => j.payment_status === "ESCROW_HOLD").reduce((acc: number, curr: any) => acc + curr.budget, 0);
 
-          setStats({
-            totalClips: completedJobs.length,
-            activeJobs: jobs.filter((j: any) => ["IN_PROGRESS", "REVIEW"].includes(j.status)).length,
-            totalEarnings: totalEarned,
-            pendingPayments: pending,
-            openJobs: 0
-          });
-        }
-      } catch (err) {
-        console.error("Failed to fetch dashboard data", err);
-      } finally {
-        setLoading(false);
-      }
-    };
+  //         setStats({
+  //           totalClips: completedJobs.length,
+  //           activeJobs: jobs.filter((j: any) => ["IN_PROGRESS", "REVIEW"].includes(j.status)).length,
+  //           totalEarnings: totalEarned,
+  //           pendingPayments: pending,
+  //           openJobs: 0
+  //         });
+  //       }
+  //     } catch (err) {
+  //       console.error("Failed to fetch dashboard data", err);
+  //     } finally {
+  //       setLoading(false);
+  //     }
+  //   };
 
-    if (user) fetchDashboardData();
-  }, [user]);
+  //   if (user) fetchDashboardData();
+  // }, [user]);
 
-  const markRead = async (id: number) => {
-    setMarkingId(id);
-    try {
-      await api.post(`/api/marketplace/notifications/${id}/read`);
-      const res = await api.get("/api/marketplace/notifications");
-      setNotifications(res.data.data || []);
-      window.dispatchEvent(new Event("clipfix:notifications-updated"));
-    } finally {
-      setMarkingId(null);
-    }
-  };
+  // const markRead = async (id: number) => {
+  //   setMarkingId(id);
+  //   try {
+  //     await api.post(`/api/marketplace/notifications/${id}/read`);
+  //     const res = await api.get("/api/marketplace/notifications");
+  //     setNotifications(res.data.data || []);
+  //     window.dispatchEvent(new Event("clipfix:notifications-updated"));
+  //   } finally {
+  //     setMarkingId(null);
+  //   }
+  // };
 
-  const markAllRead = async () => {
-    setMarkingAll(true);
-    try {
-      await api.post("/api/marketplace/notifications/read-all");
-      const res = await api.get("/api/marketplace/notifications");
-      setNotifications(res.data.data || []);
-      window.dispatchEvent(new Event("clipfix:notifications-updated"));
-    } finally {
-      setMarkingAll(false);
-    }
-  };
+  // const markAllRead = async () => {
+  //   setMarkingAll(true);
+  //   try {
+  //     await api.post("/api/marketplace/notifications/read-all");
+  //     const res = await api.get("/api/marketplace/notifications");
+  //     setNotifications(res.data.data || []);
+  //     window.dispatchEvent(new Event("clipfix:notifications-updated"));
+  //   } finally {
+  //     setMarkingAll(false);
+  //   }
+  // };
 
-  const openNotification = async (n: any) => {
-    if (!n.read_at) {
-      await markRead(n.id);
-    }
-    const jobId = n.meta?.job_id;
-    if (jobId) {
-      router.push(`/dashboard/jobs/${jobId}`);
-      return;
-    }
-    const clipperId = n.meta?.clipper_id;
-    if (clipperId) {
-      router.push(`/dashboard/clippers/${clipperId}`);
-      return;
-    } else {
-      router.push("/dashboard/notifications");
-    }
-  };
+  // const openNotification = async (n: any) => {
+  //   if (!n.read_at) {
+  //     await markRead(n.id);
+  //   }
+  //   const jobId = n.meta?.job_id;
+  //   if (jobId) {
+  //     router.push(`/dashboard/jobs/${jobId}`);
+  //     return;
+  //   }
+  //   const clipperId = n.meta?.clipper_id;
+  //   if (clipperId) {
+  //     router.push(`/dashboard/clippers/${clipperId}`);
+  //     return;
+  //   } else {
+  //     router.push("/dashboard/notifications");
+  //   }
+  // };
 
   const OwnerDashboard = () => (
     <div className="space-y-8">
@@ -304,18 +304,20 @@ export default function DashboardPage() {
         <div className="text-sm text-gray-500">Role: <span className="font-bold text-primary">{user?.role}</span></div>
       </div>
 
-      {loading ? (
+      {/* {loading ? (
         <div className="flex h-64 items-center justify-center">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
         </div>
-        // ) : user?.role === "OWNER" ? (
-        //   <OwnerDashboard />
-        // ) : (
-        //   <ClipperDashboard />
+        ) : user?.role === "OWNER" ? (
+          <OwnerDashboard />
+        ) : (
+          <ClipperDashboard />
         // )
 
       ) : <ClipperDashboard />
-      }
+      } */}
+
+      <ClipperDashboard />
 
       {/* Shared Recent Activity Section */}
       {/* <div className="rounded-2xl border bg-white p-8 shadow-sm">

@@ -160,9 +160,15 @@ async def youtube_upload_clip(req: UploadClipRequest, request: Request):
     if not sid:
         raise HTTPException(status_code=401, detail="Sesi tidak ditemukan, silakan connect YouTube dulu")
 
+    # Check for original clip or final rendered clip from Studio
     clip_path = CLIPS_DIR / f"{req.clip_id}.mp4"
     if not clip_path.exists():
-        raise HTTPException(status_code=404, detail="File clip tidak ditemukan")
+        # Maybe it's a final render from the Studio
+        final_path = CLIPS_DIR / f"final_{req.clip_id}.mp4"
+        if final_path.exists():
+            clip_path = final_path
+        else:
+            raise HTTPException(status_code=404, detail=f"File clip tidak ditemukan (ID: {req.clip_id})")
 
     if req.format_type not in {"regular", "short"}:
         raise HTTPException(status_code=400, detail="Format tidak valid (regular atau short)")
@@ -362,6 +368,51 @@ class RenderRequest(BaseModel):
     clip_id: str
     template: TemplateConfigModel
 
+@router.post("/transcribe-clip/{clip_id}")
+async def api_transcribe_clip_ai(clip_id: str):
+    import google.generativeai as genai
+    import json
+    
+    input_path = CLIPS_DIR / f"{clip_id}.mp4"
+    if not input_path.exists():
+        raise HTTPException(status_code=404, detail="Original clip tidak ditemukan")
+        
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="GEMINI_API_KEY tidak dikonfigurasi. Harap tambahkan di .env")
+        
+    try:
+        genai.configure(api_key=api_key)
+        # Uploading video strictly for processing audio
+        uploaded = genai.upload_file(str(input_path))
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        
+        prompt = """Buat transkrip dari audio video ini beserta timestamp (start dan end dalam detik).
+Tugasmu adalah membuat subtitle bahasa Indonesia.
+Format HANYA keluarkan satu valid JSON array, di mana tiap objek berisi "start", "end", dan "text".
+Contoh:
+[ {"start": 0.0, "end": 2.5, "text": "kalimat pertama"}, {"start": 2.5, "end": 5.0, "text": "selanjutnya"} ]
+"""
+        response = model.generate_content([uploaded, prompt])
+        text = response.text.strip()
+        if text.startswith("```json"):
+            text = text[len("```json"):].strip()
+        if text.endswith("```"):
+            text = text[:-3].strip()
+            
+        entries = json.loads(text)
+        
+        # Cleanup uploaded file from google server to save space cache
+        try:
+            genai.delete_file(uploaded.name)
+        except:
+            pass
+            
+        return response_success(data={"entries": entries, "available": True}, message="Subtitles berhasil di-generate AI!")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI Transcribe Error: {str(e)}")
+
+
 @router.post("/render-template")
 async def api_render_template(req: RenderRequest, request: Request):
     input_path = CLIPS_DIR / f"{req.clip_id}.mp4"
@@ -414,6 +465,39 @@ async def api_youtube_suggest(task_id: str, format_type: str = "short"):
             target_seconds=target,
             format_type=format_type,
         )
+
+        try:
+            # Cari subtitle file berdasarkan prefix task_id, bukan stem 'merged'
+            sub_exts = [".vtt", ".srt"]
+            sub_entries = []
+            for ext in sub_exts:
+                for candidate in DOWNLOADS_DIR.glob(f"dl_{task_id}_*{ext}"):
+                    if candidate.exists():
+                        content = candidate.read_text(encoding="utf-8", errors="ignore")
+                        sub_entries = _parse_vtt(content, 0.0, duration or 99999.0)
+                        break
+                if sub_entries:
+                    break
+            
+            if sub_entries:
+                for seg in suggestions:
+                    st = seg["start_seconds"]
+                    en = seg["end_seconds"]
+                    texts = [e["text"] for e in sub_entries if e["end"] >= st and e["start"] <= en]
+                    full_text = " ".join(texts).strip()
+                    if full_text:
+                        score_data = _score_viral_moment(full_text, st, en)
+                        seg["viral_score"] = max(seg.get("viral_score", 0), score_data["viral_score"]) # take the best of both audio & text
+                        seg["type"] = score_data["type"]
+                        seg["reason"] = score_data["reason"]
+                        if "keywords_detected" in score_data:
+                            seg["keywords_detected"] = score_data["keywords_detected"]
+                
+                # Re-sort heavily boosting text-based viral score segments
+                suggestions.sort(key=lambda x: x.get("viral_score", 0), reverse=True)
+        except Exception as sub_e:
+            print("Error parsing subtitles for suggest:", sub_e)
+
         return response_success(
             data={"suggestions": suggestions, "duration": duration},
             message="Saran segment berhasil dibuat",
@@ -424,36 +508,53 @@ async def api_youtube_suggest(task_id: str, format_type: str = "short"):
 
 # ─── Viral Title Generator ────────────────────────────────────────────────────
 
-def _generate_viral_titles(video_title: str, format_type: str) -> list[dict]:
+import google.generativeai as genai
+import json
+
+def _generate_viral_titles_ai(video_title: str, format_type: str, context_text: str = "") -> list[dict]:
+    # Fallback default hooks if AI fails
     short = (video_title or "Video")[:60]
-    is_short = format_type == "short"
-    titles = [
-        # Emotion
-        {"type": "emotion", "hook": "Speechless",
-         "title": f"Momen Ini Bikin Semua Orang Speechless 😭 | {short}"},
-        {"type": "emotion", "hook": "Viral Moment",
-         "title": f"Kenapa Momen Ini Bisa Bikin Jutaan Orang Nangis? | {short}"},
-        # Punchline
-        {"type": "punchline", "hook": "Plot Twist",
-         "title": f"PLOT TWIST yang Gak Ada yang Expect dari '{short}' 😱"},
-        {"type": "punchline", "hook": "Wait For It",
-         "title": f"Tunggu Sampai Habis... Ending '{short}' Bikin Kaget 🤯"},
-        # Insight
-        {"type": "insight", "hook": "Secret Revealed",
-         "title": f"Rahasia '{short}' yang Akhirnya Terungkap 🔥"},
-        {"type": "insight", "hook": "Must Know",
-         "title": f"Fakta Penting dari {short} yang Wajib Kamu Tau!"},
+    default_titles = [
+        {"type": "emotion", "hook": "Speechless", "title": f"Momen Ini Bikin Semua Orang Speechless 😭 | {short}"},
+        {"type": "punchline", "hook": "Plot Twist", "title": f"PLOT TWIST yang Gak Ada yang Expect dari '{short}' 😱"},
+        {"type": "insight", "hook": "Secret Revealed", "title": f"Rahasia '{short}' yang Akhirnya Terungkap 🔥"}
     ]
-    if is_short:
-        titles += [
-            {"type": "emotion", "hook": "POV",
-             "title": f"POV: Kamu Nonton {short} & Langsung Shocked 😭 #shorts"},
-            {"type": "punchline", "hook": "Trending",
-             "title": f"Gak Nyangka Ini Bisa Terjadi 🤯 | {short} #shorts #viral"},
-            {"type": "insight", "hook": "Hidden Truth",
-             "title": f"Hal Ini yang Gak Pernah Diberitahu | {short} #shorts"},
-        ]
-    return titles
+    
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("GEMINI_API_KEY tidak ditemukan, menggunakan fallback auto hook.")
+        return default_titles
+
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        
+        prompt = f"""Kamu adalah expert konten kreator spesialis video viral.
+Buat 4 hook & judul Youtube/Tiktok viral berdasarkan konteks video ini.
+Tipe video: {format_type} (short/vertical atau regular/horizontal).
+Judul asli: {video_title}
+Konteks teks dari subtitle:
+{context_text[:1500] if context_text else 'Tidak ada subtitle, buat berdasarkan judul saja.'}
+
+Pilih tipe hook yang sesuai: 'emotion', 'punchline', atau 'insight'.
+Format output harus HANYA valid JSON string, berupa list of objects seperti ini:
+[ {{"type": "emotion", "hook": "Wait For It", "title": "Tunggu Sampai Habis... Bikin Kaget \ud83e\udd2f"}}, ... ]
+"""
+        response = model.generate_content(prompt)
+        text = response.text.strip()
+        if text.startswith("```json"):
+            text = text[len("```json"):].strip()
+        if text.endswith("```"):
+            text = text[:-3].strip()
+        
+        titles = json.loads(text)
+        if isinstance(titles, list) and len(titles) > 0 and "title" in titles[0]:
+            return titles
+    except Exception as e:
+        print(f"Error AI Title generation: {e}")
+        pass
+    
+    return default_titles
 
 
 @router.get("/title/{task_id}")
@@ -465,6 +566,21 @@ async def suggest_viral_title(task_id: str, format_type: str = "short", request:
 
     video_title = task.get("video_title", "")
     youtube_id = task.get("youtube_id", "")
+
+    # Coba extract teks subtitle untuk konteks AI
+    context_text = ""
+    try:
+        sub_exts = [".vtt", ".srt"]
+        for ext in sub_exts:
+            for candidate in DOWNLOADS_DIR.glob(f"dl_{task_id}_*{ext}"):
+                if candidate.exists():
+                    sub_content = candidate.read_text(encoding="utf-8", errors="ignore")
+                    entries = _parse_vtt(sub_content, 0.0, 99999.0)
+                    context_text = " ".join([e["text"] for e in entries])
+                    break
+            if context_text: break
+    except Exception:
+        pass
 
     # Try to fetch real title from YouTube API if not stored
     if not video_title and youtube_id and request:
@@ -481,7 +597,7 @@ async def suggest_viral_title(task_id: str, format_type: str = "short", request:
             except Exception:
                 pass
 
-    titles = _generate_viral_titles(video_title, format_type)
+    titles = await asyncio.to_thread(_generate_viral_titles_ai, video_title, format_type, context_text)
     return response_success(
         message="Saran judul viral berhasil dibuat",
         data={"titles": titles, "video_title": video_title},
@@ -744,22 +860,318 @@ async def get_subtitles(task_id: str, start: float = 0.0, end: float = 9999.0):
     if not task:
         raise HTTPException(404, "Task tidak ditemukan")
 
-    vid_path = Path(task.get("file_path", ""))
-    stem = vid_path.stem if vid_path.exists() else f"dl_{task_id}"
-
-    # Search for subtitle files with common extensions
-    sub_exts = [".en.vtt", ".id.vtt", ".vtt", ".en.srt", ".id.srt", ".srt"]
+    # Search for subtitle files directly by matching the task_id
+    sub_exts = [".vtt", ".srt"]
     for ext in sub_exts:
-        candidate = DOWNLOADS_DIR / f"{stem}{ext}"
-        if candidate.exists():
-            content = candidate.read_text(encoding="utf-8", errors="ignore")
-            entries = _parse_vtt(content, float(start), float(end))
-            return response_success(
-                data={"available": True, "entries": entries, "format": ext.lstrip(".")},
-                message=f"Subtitle ditemukan ({ext})",
-            )
+        for candidate in DOWNLOADS_DIR.glob(f"dl_{task_id}_*{ext}"):
+            if candidate.exists():
+                content = candidate.read_text(encoding="utf-8", errors="ignore")
+                entries = _parse_vtt(content, float(start), float(end))
+                return response_success(
+                    data={"available": True, "entries": entries, "format": ext.lstrip(".")},
+                    message=f"Subtitle ditemukan",
+                )
 
     return response_success(
         data={"available": False, "entries": [], "format": None},
         message="Subtitle tidak tersedia. Video baru akan otomatis didownload subtitlenya.",
+    )
+
+
+# ─── Viral Moment Detector ────────────────────────────────────────────────────
+
+# Keyword banks with per-word weight contributions (Indonesian + English)
+_VIRAL_KEYWORDS: dict[str, tuple[int, str]] = {
+    # --- HIGH IMPACT (emotion / shock) ---
+    "gila":           (18, "emotion"),
+    "parah":          (16, "emotion"),
+    "gokil":          (16, "emotion"),
+    "gilak":          (15, "emotion"),
+    "serius":         (12, "emotion"),
+    "serius?":        (12, "emotion"),
+    "shocking":       (18, "emotion"),
+    "syok":           (15, "emotion"),
+    "kaget":          (14, "emotion"),
+    "nangis":         (14, "emotion"),
+    "ngerasa":        (10, "emotion"),
+    "sedih":          (10, "emotion"),
+    "marah":          (10, "emotion"),
+    "kesel":          (10, "emotion"),
+    "takut":          (10, "emotion"),
+    "ngeri":          (12, "emotion"),
+    "OMG":            (16, "emotion"),
+    "omg":            (16, "emotion"),
+    "wow":            (13, "emotion"),
+    "WOW":            (13, "emotion"),
+    "astaga":         (13, "emotion"),
+    "gak nyangka":    (18, "emotion"),
+    "tidak nyangka":  (18, "emotion"),
+    "tidak disangka": (18, "emotion"),
+    "impossible":     (15, "emotion"),
+    "unbelievable":   (16, "emotion"),
+    "bohong":         (12, "emotion"),
+    "dusta":          (10, "emotion"),
+    "speechless":     (15, "emotion"),
+    # --- HOOK / ATTENTION GRABBERS ---
+    "rahasia":            (18, "hook"),
+    "secret":             (18, "hook"),
+    "terungkap":          (18, "hook"),
+    "finally revealed":   (18, "hook"),
+    "revealed":           (14, "hook"),
+    "ternyata":           (16, "hook"),
+    "you won't believe":  (20, "hook"),
+    "wait for it":        (16, "hook"),
+    "plot twist":         (20, "hook"),
+    "twist":              (14, "hook"),
+    "ending":             (10, "hook"),
+    "spoiler":            (10, "hook"),
+    "eksklusif":          (14, "hook"),
+    "exclusive":          (14, "hook"),
+    "breaking":           (14, "hook"),
+    "breaking news":      (18, "hook"),
+    "terbaru":            (10, "hook"),
+    "pertama kali":       (14, "hook"),
+    "first time":         (14, "hook"),
+    "viral":              (12, "hook"),
+    "trending":           (12, "hook"),
+    "bocoran":            (16, "hook"),
+    "leaked":             (14, "hook"),
+    "jangan bagikan":     (16, "hook"),
+    "don't share":        (16, "hook"),
+    # --- INSIGHT / VALUE ---
+    "fakta":          (12, "insight"),
+    "fact":           (12, "insight"),
+    "tips":           (12, "insight"),
+    "trik":           (12, "insight"),
+    "trick":          (12, "insight"),
+    "cara":           ( 8, "insight"),
+    "bagaimana":      ( 6, "insight"),
+    "how to":         (10, "insight"),
+    "tutorial":       (10, "insight"),
+    "penting":        (12, "insight"),
+    "important":      (12, "insight"),
+    "wajib tau":      (16, "insight"),
+    "must know":      (16, "insight"),
+    "terbukti":       (12, "insight"),
+    "proven":         (12, "insight"),
+    "riset":          (10, "insight"),
+    "penelitian":     (10, "insight"),
+    "studi":          (10, "insight"),
+    "study":          (10, "insight"),
+    "data":           ( 8, "insight"),
+    "bukti":          (10, "insight"),
+    "evidence":       (10, "insight"),
+    "solusi":         (10, "insight"),
+    "solution":       (10, "insight"),
+    "strategi":       (10, "insight"),
+    "strategy":       (10, "insight"),
+    "rumus":          (10, "insight"),
+    # --- PUNCHLINE / CLIMAX ---
+    "pada akhirnya":  (12, "punchline"),
+    "intinya":        (12, "punchline"),
+    "kesimpulannya":  (12, "punchline"),
+    "jadi":           ( 6, "punchline"),
+    "akhirnya":       (12, "punchline"),
+    "at the end":     (12, "punchline"),
+    "turns out":      (14, "punchline"),
+    "the truth is":   (14, "punchline"),
+    "kenyataannya":   (14, "punchline"),
+    "sebenernya":     (12, "punchline"),
+    "sebenarnya":     (12, "punchline"),
+    "actually":       (10, "punchline"),
+    "hasilnya":       (10, "punchline"),
+    "result":         ( 8, "punchline"),
+    # --- CTA (Call to Action) ---
+    "subscribe":      (12, "cta"),
+    "like":           ( 8, "cta"),
+    "komen":          ( 8, "cta"),
+    "comment":        ( 8, "cta"),
+    "share":          ( 8, "cta"),
+    "follow":         ( 8, "cta"),
+    "klik":           ( 6, "cta"),
+    "click":          ( 6, "cta"),
+    "tonton":         ( 6, "cta"),
+    "watch":          ( 6, "cta"),
+    "jangan lupa":    (10, "cta"),
+    "don't forget":   (10, "cta"),
+    "link di bio":    (10, "cta"),
+    "link in bio":    (10, "cta"),
+    "swipe up":       (10, "cta"),
+    "kunjungi":       ( 6, "cta"),
+    "visit":          ( 6, "cta"),
+    "daftarkan":      ( 8, "cta"),
+    "register":       ( 8, "cta"),
+}
+
+# Punctuation patterns that signal intensity / climax
+_INTENSITY_PATTERNS = [
+    (r"[!]{2,}", 8),          # Multiple exclamation marks
+    (r"[?!]{2,}", 8),         # Mixed ?? or !?
+    (r"\b[A-Z]{3,}\b", 6),   # All-caps word (e.g. WOW, OMG, GILA)
+    (r"😱|🤯|😭|🔥|💥|⚡|❗|🚨", 8), # High-energy emojis
+    (r"😂|😆|🤣|😹", 5),      # Humor emojis
+    (r"\.{3,}", 3),            # Ellipsis → suspense
+]
+
+
+class ViralScoreRequest(BaseModel):
+    subtitle_text: str
+    start_time: float = 0.0
+    end_time: float = 0.0
+
+
+class ViralScoreBatchRequest(BaseModel):
+    segments: list[ViralScoreRequest]
+
+
+def _score_viral_moment(subtitle_text: str, start_time: float, end_time: float) -> dict:
+    """
+    Rule-based viral moment scorer.
+
+    Returns a dict matching the prompt spec:
+      viral_score (0-100), type, keywords_detected, reason
+    """
+    import re as _re
+
+    text = subtitle_text.strip()
+    text_lower = text.lower()
+
+    if not text:
+        return {
+            "viral_score": 0,
+            "type": "hook",
+            "keywords_detected": [],
+            "reason": "Segment kosong / tidak ada teks untuk dianalisis.",
+        }
+
+    raw_score = 0
+    detected_keywords: list[str] = []
+    type_votes: dict[str, int] = {
+        "emotion": 0, "hook": 0, "insight": 0, "punchline": 0, "cta": 0
+    }
+
+    # ── 1. Keyword matching ──────────────────────────────────────────────────
+    for kw, (weight, kw_type) in _VIRAL_KEYWORDS.items():
+        if kw.lower() in text_lower:
+            raw_score += weight
+            type_votes[kw_type] += weight
+            detected_keywords.append(kw)
+
+    # ── 2. Intensity / punctuation patterns ─────────────────────────────────
+    pattern_bonuses = 0
+    for pattern, bonus in _INTENSITY_PATTERNS:
+        if _re.search(pattern, text):
+            pattern_bonuses += bonus
+    raw_score += pattern_bonuses
+
+    # ── 3. Duration factor: very short segments (<3 s) are penalised ────────
+    duration = max(0.0, end_time - start_time)
+    if duration < 3.0:
+        raw_score = max(0, raw_score - 10)
+
+    # ── 4. Length factor: extremely short texts (< 5 words) get penalty ────
+    word_count = len(text.split())
+    if word_count < 5:
+        raw_score = max(0, raw_score - 8)
+
+    # ── 5. Cap at 100 ───────────────────────────────────────────────────────
+    viral_score = min(100, max(0, raw_score))
+
+    # ── 6. Determine dominant type ──────────────────────────────────────────
+    if any(v > 0 for v in type_votes.values()):
+        dominant_type = max(type_votes, key=lambda t: type_votes[t])
+    else:
+        dominant_type = "hook"
+
+    # ── 7. Build reason string ──────────────────────────────────────────────
+    if viral_score >= 75:
+        reason = (
+            f"Segment ini sangat viral ({viral_score}/100). "
+            f"Mengandung kata kunci high-impact: {', '.join(detected_keywords[:5])}. "
+            f"Dominan tipe '{dominant_type}'."
+        )
+    elif viral_score >= 45:
+        reason = (
+            f"Potensi viral sedang ({viral_score}/100). "
+            f"Terdapat beberapa elemen menarik: {', '.join(detected_keywords[:3]) or 'pola tanda baca'}. "
+            f"Bisa dikembangkan lebih lanjut."
+        )
+    elif viral_score >= 20:
+        reason = (
+            f"Potensi viral rendah ({viral_score}/100). "
+            + (f"Kata kunci lemah terdeteksi: {', '.join(detected_keywords)}. " if detected_keywords else "Tidak ada kata kunci kuat. ")
+            + "Konten terkesan generik atau percakapan biasa."
+        )
+    else:
+        reason = (
+            f"Bukan momen viral ({viral_score}/100). "
+            "Tidak ada kata kunci high-impact, emosi, atau hook yang terdeteksi. "
+            "Kemungkinan filler atau percakapan biasa."
+        )
+
+    return {
+        "viral_score": viral_score,
+        "type": dominant_type,
+        "keywords_detected": detected_keywords,
+        "reason": reason,
+    }
+
+
+@router.post("/viral-score")
+async def api_viral_score(req: ViralScoreRequest):
+    """
+    Analyze a subtitle segment and return a viral moment score.
+
+    Input:
+      - subtitle_text: the raw subtitle text
+      - start_time: segment start in seconds
+      - end_time:   segment end in seconds
+
+    Output (JSON):
+      - viral_score (0-100)
+      - type: punchline | emotion | insight | hook | cta
+      - keywords_detected: list of matched high-impact phrases
+      - reason: short explanation
+    """
+    result = await asyncio.to_thread(
+        _score_viral_moment,
+        req.subtitle_text,
+        req.start_time,
+        req.end_time,
+    )
+    return response_success(data=result, message="Viral score berhasil dihitung")
+
+
+@router.post("/viral-score/batch")
+async def api_viral_score_batch(req: ViralScoreBatchRequest):
+    """
+    Score multiple subtitle segments in a single request.
+    Returns each segment's score alongside its input timestamps.
+    Segments are sorted by viral_score descending.
+    """
+    if not req.segments:
+        raise HTTPException(status_code=400, detail="Segments tidak boleh kosong")
+    if len(req.segments) > 200:
+        raise HTTPException(status_code=400, detail="Maksimal 200 segments per request")
+
+    async def _score_one(seg: ViralScoreRequest) -> dict:
+        result = await asyncio.to_thread(
+            _score_viral_moment,
+            seg.subtitle_text,
+            seg.start_time,
+            seg.end_time,
+        )
+        return {
+            "start_time": seg.start_time,
+            "end_time": seg.end_time,
+            "subtitle_text": seg.subtitle_text,
+            **result,
+        }
+
+    scored = await asyncio.gather(*[_score_one(s) for s in req.segments])
+    scored_sorted = sorted(scored, key=lambda x: x["viral_score"], reverse=True)
+
+    return response_success(
+        data={"results": scored_sorted, "total": len(scored_sorted)},
+        message="Batch viral score berhasil dihitung",
     )

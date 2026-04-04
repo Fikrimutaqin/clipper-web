@@ -46,6 +46,7 @@ def _download_youtube_task(task_id: str, url: str):
         "nocheckcertificate": True,
         "no_warnings": True,
         "retries": 5,
+        "ignoreerrors": True,
         # Auto-download subtitles (VTT) for subtitle step in clipper
         "writesubtitles": True,
         "writeautomaticsub": True,
@@ -70,10 +71,24 @@ def _download_youtube_task(task_id: str, url: str):
         try:
             with YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
+            
+            # If ignoreerrors is True, info might be None if it failed partially
+            if not info:
+                # Retry once without subtitles if 429 occurred
+                ydl_opts["writesubtitles"] = False
+                ydl_opts["writeautomaticsub"] = False
+                with YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
         except Exception as e:
             msg = str(e)
             if "could not find chrome cookies database" in msg.lower() and "cookiesfrombrowser" in ydl_opts:
                 ydl_opts.pop("cookiesfrombrowser", None)
+                with YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+            elif "429" in msg or "subtitles" in msg.lower():
+                # Fallback: Download video ONLY if subtitles caused the crash
+                ydl_opts["writesubtitles"] = False
+                ydl_opts["writeautomaticsub"] = False
                 with YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
             else:

@@ -5,11 +5,21 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   Video, Search, Download, Loader2, Zap, Scissors, Play, Send,
   ExternalLink, CheckCircle2, AlertCircle, Sparkles, Image as ImageIcon,
-  Copy, Clock, FileText, ChevronRight, BarChart2,
+  Copy, Clock, ChevronRight, BarChart2, Flame, TrendingUp, Tag,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import api from "@/lib/axios";
+
+interface ViralMomentResult {
+  start_time: number;
+  end_time: number;
+  subtitle_text: string;
+  viral_score: number;
+  type: "punchline" | "emotion" | "insight" | "hook" | "cta";
+  keywords_detected: string[];
+  reason: string;
+}
 
 interface VideoItem {
   id: string;
@@ -20,7 +30,7 @@ interface VideoItem {
 const STEPS = [
   { id: 1, icon: "🔥", label: "AI Detect" },
   { id: 2, icon: "✂️", label: "Auto Cut" },
-  { id: 3, icon: "🧠", label: "Content" },
+  { id: 3, icon: "🎬", label: "AI Video Studio" },
   { id: 4, icon: "🎬", label: "Subtitles" },
   { id: 5, icon: "📤", label: "Export" },
 ];
@@ -142,6 +152,13 @@ export default function ClipperPage() {
   // Step 4 – Subtitles
   const [subtitleData, setSubtitleData] = useState<{ available: boolean; entries: any[]; } | null>(null);
   const [loadingSubs, setLoadingSubs] = useState(false);
+  const [generatingAiSubs, setGeneratingAiSubs] = useState(false);
+
+  // Viral Score Analysis
+  const [viralScoreResults, setViralScoreResults] = useState<ViralMomentResult[]>([]);
+  const [analyzingViral, setAnalyzingViral] = useState(false);
+  const [viralError, setViralError] = useState("");
+  const [showAllViral, setShowAllViral] = useState(false);
 
   // Step 5 – Template Editor
   const [templateConfig, setTemplateConfig] = useState({
@@ -174,7 +191,6 @@ export default function ClipperPage() {
 
   // ── Effects ────────────────────────────────────────────────────────────────
   useEffect(() => {
-    // Check YouTube connection — endpoint is /status, not /me
     api.get("/api/youtube/status")
       .then(r => {
         const connected = r.data?.data?.connected === true;
@@ -185,7 +201,6 @@ export default function ClipperPage() {
         setYtConnected(false);
         setPlatformStatus(p => ({ ...p, YT: false }));
       });
-    // Trending videos — endpoint is /discover, not /trending
     api.get("/api/youtube/discover").then(r => setVideos(r.data?.data?.items || [])).catch(() => { });
   }, []);
 
@@ -196,7 +211,7 @@ export default function ClipperPage() {
     const exportUrl = searchParams.get("url") || "";
 
     if (clipExportId && exportUrl) {
-      setSelectedTaskId("clip-" + clipExportId); // dummy task_id to pass validation
+      setSelectedTaskId("clip-" + clipExportId);
       setClipResult({ clip_id: clipExportId, url: exportUrl, full_url: exportUrl });
       setUploadTitle(exportFilename.replace(/\.mp4$/i, ""));
       setUploadDesc("Diposting secara otomatis melalui ClipFIX AI! 🔥 #shorts #viral");
@@ -212,30 +227,23 @@ export default function ClipperPage() {
       setWizardStep(1);
     };
 
-    // Try status endpoint first (now with auto-recovery on BE side)
     api.get(`/api/youtube/download/${tid}`)
       .then(r => {
         const status = r.data?.data?.status;
-        // Accept 'done' — or a recovered task that has file_path
         if (status === "done" || r.data?.data?.file_path) {
           activate();
         } else {
-          // Fallback: trust the task_id from Media Library and let wizard
-          // endpoints handle auto-recovery when user clicks "Detect Highlights"
           activate();
         }
       })
       .catch(() => {
-        // Even if status check fails, activate — the suggest/trim endpoints
-        // will auto-recover from disk and show proper errors if needed
         activate();
       });
   }, [searchParams]);
 
-  // Reset wizard when new video is selected
   useEffect(() => {
     if (!selectedTaskId) return;
-    if (selectedTaskId.startsWith("clip-")) return; // Skip reset for direct clip export
+    if (selectedTaskId.startsWith("clip-")) return;
     setSuggestions([]);
     setPickedSuggestion(null);
     setClipResult(null);
@@ -246,35 +254,26 @@ export default function ClipperPage() {
     setWizardStep(1);
   }, [selectedTaskId]);
 
-  // Auto-advance to step 3 when clip is created
   useEffect(() => {
     if (clipResult && wizardStep === 2) setWizardStep(3);
   }, [clipResult, wizardStep]);
 
-  // Protect against navigation
   useEffect(() => {
-    // Only warn if they actually started working (wizardStep > 1)
     const isEditing = wizardStep > 1;
     if (!isEditing) return;
 
-    // 1. Warn on browser refresh, tab close, or manual URL change
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = "";
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
 
-    // 2. Warn on client-side navigation (Links & Buttons)
     const handleNavigationClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-
-      // Is it a sidebar link or a button outside the editor?
       const anchor = target.closest("a");
       const isExternalLink = anchor && anchor.getAttribute("target") === "_blank";
       const href = anchor ? anchor.getAttribute("href") : null;
       const isSamePage = href && (href.startsWith("#") || href.startsWith("/dashboard/clipper"));
-
-      // Intercept profile button or any external anchor
       const isOutsideButton = target.closest('[role="button"]') && !target.closest('#clip-editor');
 
       if (isExternalLink || isSamePage) return;
@@ -296,7 +295,6 @@ export default function ClipperPage() {
   }, [wizardStep]);
 
 
-  // Download polling
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
@@ -425,14 +423,51 @@ export default function ClipperPage() {
       const res = await api.get(`/api/youtube/subtitles/${selectedTaskId}`, {
         params: { start: trimStart, end: trimEnd },
       });
-      setSubtitleData(res.data.data);
+      const data = res.data.data;
+      setSubtitleData(data);
+      if (data?.available && data.entries?.length > 0) {
+        analyzeViralMoments(data.entries);
+      }
     } catch { setSubtitleData({ available: false, entries: [] }); }
     finally { setLoadingSubs(false); }
   };
 
-  // const setUploadDesc = (desc: string) => {
-  //   // ... existing logic
-  // };
+  const analyzeViralMoments = async (entries: any[]) => {
+    if (!entries || entries.length === 0) return;
+    setAnalyzingViral(true);
+    setViralError("");
+    setViralScoreResults([]);
+    try {
+      const segments = entries.map((e: any) => ({
+        subtitle_text: e.text,
+        start_time: e.start,
+        end_time: e.end,
+      }));
+      const res = await api.post("/api/youtube/viral-score/batch", { segments });
+      setViralScoreResults(res.data.data.results || []);
+    } catch (e: any) {
+      setViralError(extractError(e, "Gagal menganalisis momen viral."));
+    } finally {
+      setAnalyzingViral(false);
+    }
+  };
+
+  const handleGenerateAiSubtitles = async () => {
+    if (!clipResult) return;
+    setGeneratingAiSubs(true);
+    try {
+      const res = await api.post(`/api/youtube/transcribe-clip/${clipResult.clip_id}`);
+      const data = res.data.data;
+      setSubtitleData({ available: true, entries: data.entries });
+      if (data.entries && data.entries.length > 0) {
+        analyzeViralMoments(data.entries);
+      }
+    } catch (e: any) {
+      alert(e.response?.data?.detail || "Gagal menghasilkan subtitle dari AI.");
+    } finally {
+      setGeneratingAiSubs(false);
+    }
+  };
 
   const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
     if (!subtitleData || !subtitleData.entries) return;
@@ -456,7 +491,6 @@ export default function ClipperPage() {
           entries: subtitleData?.entries || []
         }
       });
-      // update clipResult to point to the new hardcoded video
       setClipResult({
         clip_id: resp.data.data.clip_id,
         url: resp.data.data.url,
@@ -500,19 +534,15 @@ export default function ClipperPage() {
     window.location.href = `${apiBase}/api/youtube/connect?redirect=${encodeURIComponent(redirectUrl)}`;
   };
 
-  // ── Left panel helpers ─────────────────────────────────────────────────────
   const PLATFORMS = ["YT", "TT", "IG", "FB"] as const;
 
-  // ── JSX ────────────────────────────────────────────────────────────────────
   return (
     <div className="h-screen flex flex-col bg-gray-50 rounded-lg">
-      {/* Topbar */}
       <div className="shrink-0 border-b bg-white px-8 py-4 flex items-center gap-3 rounded-lg">
         <Video className="h-5 w-5 text-violet-600" />
         <h1 className="text-lg font-bold text-gray-900">Clip Editor</h1>
         <span className="text-xs text-gray-400 ml-2 hidden sm:block">Pipeline AI → Auto Cut → Subtitle → Export</span>
 
-        {/* Platform badges — right side */}
         <div className="ml-auto flex items-center gap-2">
           {PLATFORM_CARDS.map(pl => {
             const connected = platformStatus[pl.key];
@@ -535,10 +565,8 @@ export default function ClipperPage() {
       </div>
 
       <div className="flex-1 flex gap-0 min-h-0 rounded-lg">
-        {/* ═══ LEFT PANEL ═══ */}
         <div className="w-80 shrink-0 border-r bg-white flex flex-col min-h-0">
           <div className="p-4 border-b space-y-3">
-            {/* Source platform */}
             <div className="flex gap-1">
               {PLATFORMS.map(p => (
                 <button key={p} onClick={() => setSourcePlatform(p)}
@@ -547,7 +575,6 @@ export default function ClipperPage() {
                 </button>
               ))}
             </div>
-            {/* URL input */}
             <div className="flex gap-2">
               <Input value={searchUrl} onChange={e => setSearchUrl(e.target.value)}
                 placeholder="Paste URL video..." className="text-sm h-9 rounded-xl" />
@@ -557,7 +584,6 @@ export default function ClipperPage() {
                 <Download className="h-4 w-4" />
               </Button>
             </div>
-            {/* Search */}
             <div className="flex gap-2">
               <Input value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && handleSearch()}
@@ -568,7 +594,6 @@ export default function ClipperPage() {
             </div>
           </div>
 
-          {/* Download progress */}
           {downloading && (
             <div className="mx-4 mt-3 p-3 rounded-xl border bg-violet-50">
               <div className="text-xs font-semibold text-violet-700 mb-1">
@@ -580,14 +605,12 @@ export default function ClipperPage() {
             </div>
           )}
 
-          {/* Error */}
           {error && (
             <div className="mx-4 mt-3 flex gap-2 items-start text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">
               <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" /> {error}
             </div>
           )}
 
-          {/* Video list */}
           <div className="flex-1 overflow-y-auto p-4 space-y-2">
             {loading ? (
               <div className="flex justify-center pt-10"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
@@ -609,16 +632,13 @@ export default function ClipperPage() {
           </div>
         </div>
 
-        {/* ═══ RIGHT PANEL – Wizard ═══ */}
         <div id="clip-editor" className="flex-1 flex flex-col min-h-0 rounded-lg">
           {!selectedTaskId ? (
             (() => {
               const anyConnected = Object.values(platformStatus).some(v => v);
               return anyConnected ? (
-                /* ── Already connected: simple pick-video empty state ── */
                 <div className="flex-1 flex flex-col items-center justify-center text-center gap-4 p-12">
                   <div className="w-20 h-20 rounded-3xl bg-violet-50 flex items-center justify-center text-4xl">🎬</div>
-                  {/* Connected badges */}
                   <div className="flex gap-2 justify-center">
                     {PLATFORM_CARDS.filter(p => platformStatus[p.key]).map(p => (
                       <span key={p.key} className="flex items-center gap-1 text-xs font-semibold bg-green-50 border border-green-200 text-green-700 rounded-full px-3 py-1">
@@ -640,17 +660,14 @@ export default function ClipperPage() {
                   </div>
                 </div>
               ) : (
-                /* ── Not connected: show connect platform screen ── */
                 <div className="flex-1 overflow-y-auto p-8">
                   <div className="max-w-lg mx-auto space-y-6">
-                    {/* Header */}
                     <div className="text-center space-y-1">
                       <div className="text-4xl mb-3">🔗</div>
                       <h2 className="text-2xl font-bold text-gray-900">Hubungkan Platform</h2>
                       <p className="text-sm text-gray-500">Koneksikan akun agar clip kamu bisa langsung diupload setelah selesai diedit.</p>
                     </div>
 
-                    {/* Platform cards */}
                     <div className="space-y-3">
                       {PLATFORM_CARDS.map(pl => {
                         const connected = platformStatus[pl.key];
@@ -689,7 +706,6 @@ export default function ClipperPage() {
                       })}
                     </div>
 
-                    {/* Skip CTA */}
                     <div className="pt-2 border-t">
                       <p className="text-xs text-center text-gray-400 mb-4">Koneksi bersifat opsional — kamu bisa skip dan tetap download clip secara manual.</p>
                       <div className="text-center space-y-2">
@@ -711,7 +727,6 @@ export default function ClipperPage() {
             })()
           ) : (
             <div className="flex-1 flex flex-col min-h-0">
-              {/* Step Progress */}
               <div className="shrink-0 border-b bg-white px-6 py-3">
                 <div className="flex items-center gap-1">
                   {STEPS.map((s, i) => {
@@ -734,17 +749,14 @@ export default function ClipperPage() {
                 </div>
               </div>
 
-              {/* Step Content */}
               <div className="flex-1 overflow-y-auto p-6">
 
-                {/* ── STEP 1: AI Detect ── */}
                 {wizardStep === 1 && (
                   <div className="max-w-2xl space-y-5">
                     <div>
                       <h2 className="text-xl font-bold flex items-center gap-2">🔥 AI Detect Highlight</h2>
                       <p className="text-sm text-gray-500 mt-0.5">AI menganalisis audio energy untuk temukan momen paling viral.</p>
                     </div>
-                    {/* Format */}
                     <div className="flex gap-3">
                       {[{ k: "short", l: "9:16 Short", d: "(min 20s)" }, { k: "regular", l: "16:9 Regular", d: "(min 10 min)" }].map(f => (
                         <button key={f.k} onClick={() => setFormat(f.k as any)}
@@ -753,12 +765,10 @@ export default function ClipperPage() {
                         </button>
                       ))}
                     </div>
-                    {/* Detect button */}
                     <Button className="w-full py-5 rounded-xl text-base gap-2" onClick={detectHighlights} disabled={detecting}>
                       {detecting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Zap className="h-5 w-5" />}
                       {detecting ? "Menganalisis video..." : "⚡ Detect Highlights"}
                     </Button>
-                    {/* Suggestion cards */}
                     {suggestions.length > 0 && (
                       <div className="space-y-3">
                         <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
@@ -777,7 +787,6 @@ export default function ClipperPage() {
                               <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{fmtSec(s.start_seconds)} – {fmtSec(s.end_seconds)}</span>
                               <span className="flex items-center gap-1"><BarChart2 className="h-3 w-3" />{Math.round(s.end_seconds - s.start_seconds)}s</span>
                             </div>
-                            {/* Viral score bar */}
                             <div className="mt-3 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                               <div className={`h-full rounded-full transition-all ${(s.viral_score ?? 0) >= 75 ? "bg-green-500" : (s.viral_score ?? 0) >= 50 ? "bg-orange-400" : "bg-gray-400"}`}
                                 style={{ width: `${s.viral_score ?? 0}%` }} />
@@ -794,14 +803,12 @@ export default function ClipperPage() {
                   </div>
                 )}
 
-                {/* ── STEP 2: Auto Cut ── */}
                 {wizardStep === 2 && (
                   <div className="max-w-lg space-y-5">
                     <div>
                       <h2 className="text-xl font-bold flex items-center gap-2">✂️ Auto Cut Clip</h2>
                       <p className="text-sm text-gray-500 mt-0.5">Review dan sesuaikan waktu potongan, lalu proses.</p>
                     </div>
-                    {/* Selected segment info */}
                     {pickedSuggestion && (
                       <div className={`rounded-2xl border-l-4 bg-white border p-4 ${typeColor[pickedSuggestion.type] || "border-l-gray-300"}`}>
                         <div className="flex items-center justify-between">
@@ -815,7 +822,6 @@ export default function ClipperPage() {
                         </div>
                       </div>
                     )}
-                    {/* Time inputs */}
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
                         <label className="text-xs font-semibold text-gray-600">Start (detik)</label>
@@ -850,81 +856,68 @@ export default function ClipperPage() {
                   </div>
                 )}
 
-                {/* ── STEP 3: Content ── */}
                 {wizardStep === 3 && (
-                  <div className="max-w-xl space-y-5">
-                    <div>
-                      <h2 className="text-xl font-bold flex items-center gap-2">🧠 Auto Hook Generator</h2>
-                      <p className="text-sm text-gray-500 mt-0.5">Generate judul viral, thumbnail, dan deskripsi untuk clip kamu.</p>
+                  <div className="max-w-xl space-y-6">
+                    <div className="bg-indigo-600 rounded-3xl p-8 text-white relative overflow-hidden shadow-2xl shadow-indigo-200">
+                      <div className="absolute top-0 right-0 -mr-8 -mt-8 w-40 h-40 bg-white/10 rounded-full blur-3xl"></div>
+                      <div className="relative z-10 space-y-4">
+                        <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md">
+                          <Sparkles className="w-8 h-8 text-white" />
+                        </div>
+                        <div>
+                          <h2 className="text-2xl font-bold leading-tight">AI Video Studio Editor</h2>
+                          <p className="text-indigo-100 text-sm mt-1 opacity-80">Gunakan fitur Local Subtitle & Viral Hook Generator untuk hasil maksimal.</p>
+                        </div>
+                        <Button
+                          onClick={() => router.push(`/dashboard/video-editor?from_clip=${clipResult?.clip_id}`)}
+                          className="w-full bg-white text-indigo-600 hover:bg-indigo-50 py-7 rounded-2xl text-lg font-bold shadow-xl shadow-black/10 gap-3"
+                        >
+                          <Play className="w-6 h-6 fill-current" />
+                          Buka di AI Video Studio
+                        </Button>
+                        <p className="text-[10px] text-center text-indigo-200/60 font-medium uppercase tracking-widest">
+                          Re-style, Transcribe & Viral Logic
+                        </p>
+                      </div>
                     </div>
-                    {/* Generate button */}
-                    <Button className="w-full py-4 rounded-xl gap-2" onClick={generateContent} disabled={generatingContent}>
-                      {generatingContent ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                      {generatingContent ? "Generating..." : "✨ Generate Semua Content"}
-                    </Button>
-                    {/* Titles */}
-                    {viralTitles.length > 0 && (
-                      <div className="space-y-2">
-                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Judul Viral — Klik untuk pakai</p>
-                        {viralTitles.slice(0, 6).map((t, i) => {
-                          const c = t.type === "emotion" ? "bg-pink-50 border-pink-200 text-pink-700" : t.type === "punchline" ? "bg-orange-50 border-orange-200 text-orange-700" : "bg-blue-50 border-blue-200 text-blue-700";
-                          return (
-                            <div key={i} onClick={() => copyText(t.title, setCopiedTitle)}
-                              className={`rounded-xl border px-3 py-2 text-xs cursor-pointer hover:opacity-80 transition-opacity flex items-start gap-2 ${c}`}>
-                              <div className="flex-1 font-medium leading-snug">{t.title}</div>
-                              {copiedTitle === t.title ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-0.5" /> : <Copy className="h-3.5 w-3.5 shrink-0 mt-0.5" />}
-                            </div>
-                          );
-                        })}
+
+                    <div className="bg-white border border-slate-100 rounded-3xl p-6 shadow-sm space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-amber-50 rounded-xl text-amber-600">
+                          <ImageIcon className="w-5 h-5" />
+                        </div>
+                        <h3 className="font-bold text-slate-800">Thumbnail Preview</h3>
                       </div>
-                    )}
-                    {/* Descriptions */}
-                    {viralDescs.length > 0 && (
-                      <div className="space-y-2">
-                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Deskripsi — Klik untuk pakai</p>
-                        {viralDescs.map((d, i) => {
-                          const c = d.type === "emotion" ? "bg-pink-50 border-pink-200 text-pink-700" : d.type === "punchline" ? "bg-orange-50 border-orange-200 text-orange-700" : "bg-blue-50 border-blue-200 text-blue-700";
-                          return (
-                            <div key={i} onClick={() => copyText(d.description, setCopiedDesc)}
-                              className={`rounded-xl border px-3 py-2 text-[11px] cursor-pointer hover:opacity-80 transition-opacity ${c}`}>
-                              <div className="flex items-start gap-2">
-                                <div className="flex-1 whitespace-pre-line leading-relaxed">{d.description}</div>
-                                <div className="shrink-0">{copiedDesc === d.description ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}</div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {/* Thumbnail */}
-                    <div className="space-y-2">
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Thumbnail</p>
-                      <Button size="sm" variant="outline" className="rounded-xl gap-1.5" onClick={generateThumbnail} disabled={generatingThumb}>
-                        {generatingThumb ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageIcon className="h-3.5 w-3.5" />}
+                      <Button variant="outline" className="w-full rounded-2xl gap-2 py-6 border-slate-100 bg-slate-50 text-slate-600 font-bold" onClick={generateThumbnail} disabled={generatingThumb}>
+                        {generatingThumb ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImageIcon className="h-4 w-4" />}
                         Capture Frame di {fmtSec(trimStart)}
                       </Button>
-                      {thumbError && <div className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{thumbError}</div>}
-                      {thumbnailUrl && !thumbError && (
-                        <div className="rounded-xl overflow-hidden border shadow-sm">
+                      {thumbnailUrl && (
+                        <div className="rounded-2xl overflow-hidden border-4 border-white shadow-lg">
                           <img src={thumbnailUrl} alt="Thumbnail" className="w-full h-auto" />
-                          <div className="p-2 text-[10px] text-gray-400 text-center">Klik kanan → Simpan gambar</div>
                         </div>
                       )}
                     </div>
-                    {/* Next */}
-                    <Button className="w-full rounded-xl gap-2" onClick={() => { setWizardStep(4); fetchSubtitles(); }}>
-                      Lanjut: Subtitles 🎬 <ChevronRight className="h-4 w-4" />
-                    </Button>
+
+                    <div className="flex flex-col gap-3">
+                      <Button className="w-full rounded-2xl py-6 gap-2 font-bold shadow-lg opacity-50 cursor-not-allowed" disabled={true}>
+                        Lanjut ke Subtitles 🎬 <ChevronRight className="h-4 w-4" />
+                      </Button>
+                      <p className="text-[10px] text-center text-slate-400 italic">Harap gunakan <b>AI Video Studio</b> di atas untuk melanjutkan pengeditan.</p>
+                      <button onClick={() => setWizardStep(2)} className="text-xs text-slate-400 hover:text-slate-600 transition-colors font-medium">
+                        ← Kembali ke Auto Cut
+                      </button>
+                    </div>
                   </div>
                 )}
 
-                {/* ── STEP 4: Subtitles ── */}
                 {wizardStep === 4 && (
-                  <div className="max-w-xl space-y-5">
+                  <div className="max-w-2xl space-y-5">
                     <div>
-                      <h2 className="text-xl font-bold flex items-center gap-2">🎬 Auto Subtitle</h2>
-                      <p className="text-sm text-gray-500 mt-0.5">Subtitle otomatis dari caption YouTube (jika tersedia).</p>
+                      <h2 className="text-xl font-bold flex items-center gap-2">🎬 Auto Subtitle & Viral Analysis</h2>
+                      <p className="text-sm text-gray-500 mt-0.5">Subtitle otomatis + deteksi momen paling viral dari setiap baris.</p>
                     </div>
+
                     {loadingSubs && (
                       <div className="flex items-center gap-2 text-sm text-gray-500">
                         <Loader2 className="h-4 w-4 animate-spin" /> Mencari subtitle...
@@ -933,33 +926,212 @@ export default function ClipperPage() {
                     {!loadingSubs && subtitleData && (
                       subtitleData.available ? (
                         <div className="space-y-3">
-                          <div className="flex items-center gap-2 text-sm text-green-700 font-semibold">
-                            <CheckCircle2 className="h-4 w-4" /> Subtitle tersedia!
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-sm text-green-700 font-semibold">
+                              <CheckCircle2 className="h-4 w-4" /> {subtitleData.entries.length} subtitle tersedia
+                            </div>
+                            <Button size="sm" variant="outline" className="rounded-xl gap-1.5 text-xs"
+                              onClick={() => copyText(subtitleData.entries.map((e: any) => `${fmtSec(e.start)} ${e.text}`).join("\n"), () => { })}>
+                              <Copy className="h-3 w-3" /> Copy Semua
+                            </Button>
                           </div>
-                          <div className="rounded-xl border bg-gray-50 p-3 max-h-64 overflow-y-auto space-y-2">
-                            {subtitleData.entries.slice(0, 30).map((e, i) => (
+                          <div className="rounded-xl border bg-gray-50 p-3 max-h-48 overflow-y-auto space-y-2">
+                            {subtitleData.entries.slice(0, 30).map((e: any, i: number) => (
                               <div key={i} className="text-xs flex gap-3">
-                                <span className="text-gray-400 shrink-0 font-mono">{fmtSec(e.start)}</span>
+                                <span className="text-gray-400 shrink-0 font-mono w-10">{fmtSec(e.start)}</span>
                                 <span className="text-gray-700">{e.text}</span>
                               </div>
                             ))}
                           </div>
-                          <Button size="sm" variant="outline" className="rounded-xl gap-1.5"
-                            onClick={() => copyText(subtitleData.entries.map(e => `${fmtSec(e.start)} ${e.text}`).join("\n"), () => { })}>
-                            <Copy className="h-3.5 w-3.5" /> Copy Semua Subtitle
+                          <Button className="w-full rounded-xl gap-2" onClick={() => setWizardStep(5)}>
+                            Lanjut ke Template Customizer 🎨 →
                           </Button>
                         </div>
                       ) : (
-                        <div className="rounded-2xl border-2 border-dashed p-6 text-center space-y-2">
-                          <FileText className="h-8 w-8 text-gray-300 mx-auto" />
-                          <p className="text-sm font-semibold text-gray-600">Subtitle tidak tersedia</p>
-                          <p className="text-xs text-gray-400">Video baru yang didownload akan otomatis mencoba mendapatkan subtitle YouTube.</p>
+                        <div className="flex flex-col items-center justify-center p-6 bg-red-50 border border-red-100 rounded-xl space-y-3">
+                          <AlertCircle className="h-6 w-6 text-red-500" />
+                          <div className="text-sm text-gray-700 text-center font-medium">
+                            Subtitle gagal ditarik dari YouTube. Hal ini sering terjadi karena limitasi atau video tidak memilikinya.
+                          </div>
+                          <Button
+                            onClick={handleGenerateAiSubtitles}
+                            disabled={generatingAiSubs}
+                            className="bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-md"
+                          >
+                            {generatingAiSubs ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+                            Transkrip Pakai AI (Gemini)
+                          </Button>
+                          <div className="text-xs text-gray-500 pt-3">atau lanjut tanpa subtitle</div>
+                          <Button variant="outline" className="w-full rounded-xl gap-2" onClick={() => setWizardStep(5)}>
+                            Lanjut ke Template Customizer →
+                          </Button>
                         </div>
                       )
                     )}
-                    <Button className="w-full rounded-xl gap-2" onClick={() => setWizardStep(5)}>
+
+                    <div className="border-t pt-5 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Flame className="h-5 w-5 text-orange-500" />
+                          <h3 className="font-bold text-gray-800">Viral Moment Detector</h3>
+                          {viralScoreResults.length > 0 && (
+                            <span className="text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-200 rounded-full px-2 py-0.5">
+                              {viralScoreResults.length} segment dianalisis
+                            </span>
+                          )}
+                        </div>
+                        {subtitleData?.available && subtitleData.entries.length > 0 && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="rounded-xl gap-1.5 text-xs"
+                            onClick={() => analyzeViralMoments(subtitleData.entries)}
+                            disabled={analyzingViral}
+                          >
+                            {analyzingViral ? <Loader2 className="h-3 w-3 animate-spin" /> : <TrendingUp className="h-3 w-3" />}
+                            {analyzingViral ? "Analyzing..." : "Re-analyze"}
+                          </Button>
+                        )}
+                      </div>
+
+                      {analyzingViral && (
+                        <div className="rounded-xl bg-gradient-to-r from-orange-50 to-yellow-50 border border-orange-200 p-4 flex items-center gap-3">
+                          <Loader2 className="h-5 w-5 animate-spin text-orange-500 shrink-0" />
+                          <div>
+                            <p className="text-sm font-semibold text-orange-700">Menganalisis momen viral...</p>
+                            <p className="text-xs text-orange-500 mt-0.5">Mendeteksi kata kunci, emosi, dan pola high-impact</p>
+                          </div>
+                        </div>
+                      )}
+
+                      {viralError && (
+                        <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">
+                          <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {viralError}
+                        </div>
+                      )}
+
+                      {!analyzingViral && viralScoreResults.length > 0 && (() => {
+                        const topResults = viralScoreResults.filter(r => r.viral_score >= 20);
+                        const displayResults = showAllViral ? topResults : topResults.slice(0, 5);
+                        const typePill: Record<string, string> = {
+                          emotion: "bg-pink-100 text-pink-700 border-pink-200",
+                          hook: "bg-purple-100 text-purple-700 border-purple-200",
+                          insight: "bg-blue-100 text-blue-700 border-blue-200",
+                          punchline: "bg-orange-100 text-orange-700 border-orange-200",
+                          cta: "bg-red-100 text-red-700 border-red-200",
+                        };
+                        return (
+                          <div className="space-y-3">
+                            <div className="grid grid-cols-3 gap-2">
+                              {([
+                                { label: "🔥 Sangat Viral", min: 75, color: "bg-green-500", light: "bg-green-50 border-green-200 text-green-700" },
+                                { label: "⚡ Potensial", min: 45, color: "bg-orange-400", light: "bg-orange-50 border-orange-200 text-orange-700" },
+                                { label: "💤 Biasa", min: 0, color: "bg-gray-400", light: "bg-gray-50 border-gray-200 text-gray-500" },
+                              ] as const).map(tier => {
+                                const count = viralScoreResults.filter(r => {
+                                  if (tier.min === 75) return r.viral_score >= 75;
+                                  if (tier.min === 45) return r.viral_score >= 45 && r.viral_score < 75;
+                                  return r.viral_score < 45;
+                                }).length;
+                                return (
+                                  <div key={tier.label} className={`rounded-xl border p-2 text-center ${tier.light}`}>
+                                    <div className="font-bold text-lg">{count}</div>
+                                    <div className="text-[10px] font-semibold mt-0.5">{tier.label}</div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Top Momen Viral — Klik untuk Set Range</p>
+                            {displayResults.map((r, i) => (
+                              <div
+                                key={i}
+                                className={`rounded-2xl border-2 border-l-4 bg-white p-4 hover:shadow-md transition-all cursor-pointer group ${typeColor[r.type] || "border-l-gray-300"
+                                  } ${r.viral_score >= 75 ? "border-green-200" : r.viral_score >= 45 ? "border-orange-200" : "border-gray-200"}`}
+                                onClick={() => {
+                                  setTrimStart(Math.max(0, Math.floor(r.start_time + trimStart)));
+                                  setTrimEnd(Math.ceil(r.end_time + trimStart));
+                                }}
+                              >
+                                <div className="flex items-start justify-between gap-2 mb-2">
+                                  <p className="text-xs font-semibold text-gray-800 leading-snug flex-1">
+                                    &ldquo;{r.subtitle_text.length > 100 ? r.subtitle_text.slice(0, 100) + "…" : r.subtitle_text}&rdquo;
+                                  </p>
+                                  <span className={`shrink-0 text-xs font-bold px-2 py-0.5 rounded-full border ${r.viral_score >= 75
+                                      ? "bg-green-100 text-green-700 border-green-300"
+                                      : r.viral_score >= 45
+                                        ? "bg-orange-100 text-orange-700 border-orange-300"
+                                        : "bg-gray-100 text-gray-500 border-gray-300"
+                                    }`}>
+                                    ⚡ {r.viral_score}
+                                  </span>
+                                </div>
+
+                                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden mb-2">
+                                  <div
+                                    className={`h-full rounded-full transition-all ${r.viral_score >= 75 ? "bg-green-500" : r.viral_score >= 45 ? "bg-orange-400" : "bg-gray-400"
+                                      }`}
+                                    style={{ width: `${r.viral_score}%` }}
+                                  />
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${typePill[r.type] || "bg-gray-100 text-gray-600 border-gray-200"
+                                    }`}>
+                                    {r.type.toUpperCase()}
+                                  </span>
+                                  <span className="flex items-center gap-1 text-[10px] text-gray-400">
+                                    <Clock className="h-3 w-3" />{fmtSec(r.start_time)} – {fmtSec(r.end_time)}
+                                  </span>
+                                  {r.keywords_detected.slice(0, 3).map((kw, ki) => (
+                                    <span key={ki} className="flex items-center gap-0.5 text-[10px] bg-yellow-50 border border-yellow-200 text-yellow-700 rounded-full px-1.5 py-0.5">
+                                      <Tag className="h-2.5 w-2.5" />{kw}
+                                    </span>
+                                  ))}
+                                </div>
+
+                                <p className="text-[10px] text-gray-400 mt-2 leading-relaxed italic">{r.reason}</p>
+
+                                <div className="mt-2 text-right">
+                                  <span className="text-[10px] text-violet-500 font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
+                                    ✂️ Klik untuk set clip ke segmen ini →
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+
+                            {topResults.length > 5 && (
+                              <button
+                                onClick={() => setShowAllViral(v => !v)}
+                                className="text-xs text-violet-600 font-semibold hover:underline w-full text-center py-1"
+                              >
+                                {showAllViral ? `↑ Tampilkan lebih sedikit` : `↓ Tampilkan ${topResults.length - 5} momen lainnya`}
+                              </button>
+                            )}
+
+                            {topResults.length === 0 && (
+                              <div className="text-center text-xs text-gray-400 py-4">
+                                Tidak ada momen dengan skor viral cukup tinggi (≥ 20).
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {/* Empty state — no subtitle */}
+                      {!analyzingViral && viralScoreResults.length === 0 && !subtitleData?.available && (
+                        <div className="rounded-xl border-2 border-dashed p-5 text-center space-y-1">
+                          <Flame className="h-7 w-7 text-gray-300 mx-auto" />
+                          <p className="text-xs text-gray-500">Viral analysis membutuhkan subtitle.</p>
+                          <p className="text-[10px] text-gray-400">Download video baru untuk mendapatkan subtitle otomatis.</p>
+                        </div>
+                      )}
+                    </div>
+
+                    <Button className="w-full rounded-xl gap-2 mt-4 opacity-50 cursor-not-allowed" disabled={true}>
                       Lanjut: Template & Styling 🎨 <ChevronRight className="h-4 w-4" />
                     </Button>
+                    <p className="text-[10px] text-center text-gray-400 italic mt-2">Gunakan <b>AI Video Studio</b> (di step sebelumnya) untuk memproses styling & subtitle.</p>
                     <button onClick={() => setWizardStep(3)} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">
                       ← Kembali ke Content
                     </button>
@@ -979,18 +1151,18 @@ export default function ClipperPage() {
                       <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Pilih Template Viral (Preset)</label>
                       <div className="grid grid-cols-2 gap-3">
                         {VIRAL_TEMPLATES.map((tmpl) => {
-                           // check if active by comparing config partially
-                           const isActive = templateConfig.fontname === tmpl.config.fontname && templateConfig.primary_colour === tmpl.config.primary_colour && templateConfig.fontsize === tmpl.config.fontsize;
-                           return (
-                             <div 
-                               key={tmpl.id} 
-                               onClick={() => setTemplateConfig({...templateConfig, ...tmpl.config})}
-                               className={`border-2 rounded-xl p-3 cursor-pointer hover:shadow-sm transition-all ${isActive ? 'border-violet-500 bg-violet-50' : 'border-gray-200 bg-white hover:border-violet-300'}`}
-                             >
-                               <div className={`font-bold text-sm ${isActive ? 'text-violet-700' : 'text-gray-800'}`}>{tmpl.name}</div>
-                               <div className="text-[10px] text-gray-500 mt-0.5 leading-snug">{tmpl.desc}</div>
-                             </div>
-                           );
+                          // check if active by comparing config partially
+                          const isActive = templateConfig.fontname === tmpl.config.fontname && templateConfig.primary_colour === tmpl.config.primary_colour && templateConfig.fontsize === tmpl.config.fontsize;
+                          return (
+                            <div
+                              key={tmpl.id}
+                              onClick={() => setTemplateConfig({ ...templateConfig, ...tmpl.config })}
+                              className={`border-2 rounded-xl p-3 cursor-pointer hover:shadow-sm transition-all ${isActive ? 'border-violet-500 bg-violet-50' : 'border-gray-200 bg-white hover:border-violet-300'}`}
+                            >
+                              <div className={`font-bold text-sm ${isActive ? 'text-violet-700' : 'text-gray-800'}`}>{tmpl.name}</div>
+                              <div className="text-[10px] text-gray-500 mt-0.5 leading-snug">{tmpl.desc}</div>
+                            </div>
+                          );
                         })}
                       </div>
                     </div>
@@ -1112,7 +1284,7 @@ export default function ClipperPage() {
                     {/* Video player */}
                     {clipUrl && (
                       <div className="rounded-2xl overflow-hidden border shadow-lg bg-black">
-                        <video src={clipUrl} controls className="w-full aspect-video" />
+                        <video key={clipUrl} src={clipUrl} controls className="w-full aspect-video" />
                       </div>
                     )}
                     {/* Editable metadata */}

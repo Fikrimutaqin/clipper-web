@@ -13,7 +13,8 @@ import {
   Briefcase,
   TrendingUp,
   Bell,
-  Library
+  Library,
+  Sparkles
 } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/axios";
@@ -51,30 +52,30 @@ export default function DashboardLayout({
     }
   }, [user, loading, router]);
 
-  useEffect(() => {
-    if (!user) return;
+  // useEffect(() => {
+  //   if (!user) return;
 
-    const refresh = async () => {
-      try {
-        const res = await api.get("/api/marketplace/notifications");
-        setUnreadCount(res.data?.meta?.unread_count || 0);
-      } catch {
-        setUnreadCount(0);
-      }
-    };
+  //   const refresh = async () => {
+  //     try {
+  //       const res = await api.get("/api/marketplace/notifications");
+  //       setUnreadCount(res.data?.meta?.unread_count || 0);
+  //     } catch {
+  //       setUnreadCount(0);
+  //     }
+  //   };
 
-    const onUpdated = () => {
-      refresh();
-    };
+  //   const onUpdated = () => {
+  //     refresh();
+  //   };
 
-    refresh();
-    const interval = window.setInterval(refresh, 20000);
-    window.addEventListener("clipfix:notifications-updated", onUpdated as any);
-    return () => {
-      window.clearInterval(interval);
-      window.removeEventListener("clipfix:notifications-updated", onUpdated as any);
-    };
-  }, [user, pathname]);
+  //   refresh();
+  //   const interval = window.setInterval(refresh, 20000);
+  //   window.addEventListener("clipfix:notifications-updated", onUpdated as any);
+  //   return () => {
+  //     window.clearInterval(interval);
+  //     window.removeEventListener("clipfix:notifications-updated", onUpdated as any);
+  //   };
+  // }, [user, pathname]);
 
   if (loading || !user) {
     return (
@@ -101,6 +102,7 @@ export default function DashboardLayout({
 
   const toolItems = [
     { label: "AI Clipper", icon: TrendingUp, href: "/dashboard/clipper" },
+    { label: "AI Video Studio", icon: Sparkles, href: "/dashboard/video-editor" },
     { label: "Media Library", icon: Library, href: "/dashboard/media" },
   ];
 

@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from core import ensure_dirs, CLIPS_DIR
 from _database.db import init_db
-from routes import auth, jobs, marketplace, youtube, earnings
+from routes import auth, jobs, marketplace, youtube, earnings, video_editor
 from google_auth import read_oauth_state
 import os
 import logging
@@ -11,6 +11,9 @@ import time
 import json
 from urllib.parse import parse_qs
 from jose import jwt, JWTError
+
+# Ensure directories exist before any other operations
+ensure_dirs()
 
 app = FastAPI(title="ClipFIX API", version="0.1.0")
 
@@ -141,6 +144,7 @@ app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(youtube.router, prefix="/api/youtube", tags=["youtube"])
 app.include_router(marketplace.router, prefix="/api/marketplace", tags=["marketplace"])
 app.include_router(earnings.router, prefix="/api/earnings", tags=["earnings"])
+app.include_router(video_editor.router, prefix="/api/video-editor", tags=["video-editor"])
 
 @app.get("/auth/google/callback")
 async def google_callback_alias(request: Request, state: str = "", code: str = ""):
