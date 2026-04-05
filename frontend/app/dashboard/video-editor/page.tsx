@@ -531,7 +531,7 @@ export default function VideoEditorPage() {
                       </>
                     ) : (
                       <>
-                        <Video className="w-6 h-6" />
+                        <Video className="w-6 h-6" />&nbsp;
                         Render Video
                       </>
                     )}

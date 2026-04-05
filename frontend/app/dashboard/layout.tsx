@@ -103,6 +103,9 @@ export default function DashboardLayout({
   const toolItems = [
     { label: "AI Clipper", icon: TrendingUp, href: "/dashboard/clipper" },
     { label: "AI Video Studio", icon: Sparkles, href: "/dashboard/video-editor" },
+  ];
+
+  const storageItems = [
     { label: "Media Library", icon: Library, href: "/dashboard/media" },
   ];
 
@@ -193,6 +196,32 @@ export default function DashboardLayout({
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
+
+          <SidebarGroup>
+            <SidebarGroupLabel>Storage</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {storageItems.map((item) => (
+                  <SidebarMenuItem key={item.href}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={item.href === pathname}
+                      className={
+                        item.href === pathname
+                          ? "!bg-primary !text-white hover:!bg-primary/90"
+                          : undefined
+                      }
+                    >
+                      <Link href={item.href} className="flex items-center gap-3">
+                        <item.icon className="h-4 w-4" />
+                        <span>{item.label}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
         </SidebarContent>
 
         <SidebarFooter>
@@ -237,7 +266,7 @@ export default function DashboardLayout({
             </div>
           </div>
         </header>
-        <main className="p-6 md:p-8">{children}</main>
+        <main className="p-3 md:p-4">{children}</main>
       </SidebarInset>
     </SidebarProvider>
   );

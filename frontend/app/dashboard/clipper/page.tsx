@@ -219,6 +219,22 @@ export default function ClipperPage() {
       return;
     }
 
+    const editStyleId = searchParams.get("edit_style");
+    if (editStyleId && exportUrl) {
+      setSelectedTaskId("clip-" + editStyleId);
+      setClipResult({ clip_id: editStyleId, url: exportUrl, full_url: exportUrl });
+      setWizardStep(3); // Visual Studio
+      
+      // Auto-transcribe if needed
+      if (!subtitleData) {
+        setLoadingSubs(true);
+        api.post(`/api/youtube/transcribe-clip/${editStyleId}`)
+           .then(r => setSubtitleData(r.data?.data))
+           .finally(() => setLoadingSubs(false));
+      }
+      return;
+    }
+
     const tid = searchParams.get("task_id");
     if (!tid) return;
 
@@ -341,23 +357,53 @@ export default function ClipperPage() {
     }
   };
 
+  const [batchClips, setBatchClips] = useState<any[]>([]);
+
   const detectHighlights = async () => {
     if (!selectedTaskId) return;
-    setDetecting(true); setSuggestions([]);
+    setDetecting(true); setSuggestions([]); setBatchClips([]);
     try {
-      const res = await api.get(`/api/youtube/suggest/${selectedTaskId}`, { params: { format_type: format } });
-      setSuggestions(res.data.data.suggestions || []);
-      setVideoDuration(res.data.data.duration ?? null);
+      // Trigger the batch process (Detect + Trim + Extract Subs)
+      const res = await api.post(`/api/youtube/batch-process/${selectedTaskId}`, { format_type: format, samples: 10 });
+      const clips = res.data.data.clips || [];
+      setBatchClips(clips);
+
+      // Keep legacy suggestions for compatibility if needed, but we focus on clips
+      setSuggestions(clips.map((c: any) => ({
+        ...c,
+        start_seconds: c.start,
+        end_seconds: c.end,
+        viral_score: c.score,
+        label: c.label,
+        clip_id: c.id
+      })));
+
     } catch (e: any) {
-      setError(extractError(e, "Gagal mendeteksi highlight."));
+      setError(extractError(e, "Gagal mendeteksi highlight batch."));
     } finally { setDetecting(false); }
   };
 
   const pickSuggestion = (s: any) => {
+    // With Batch Mode, the clip is ALREADY trimmed. 
+    // We skip Step 2 (Trim) and go directly to Step 3 (Studio) or Step 4 (Subtitles)
     setPickedSuggestion(s);
     setTrimStart(Math.floor(s.start_seconds));
     setTrimEnd(Math.ceil(s.end_seconds));
-    setWizardStep(2);
+
+    // Assign the already-created clip from batch to clipResult
+    setClipResult({
+      clip_id: s.id || s.clip_id,
+      url: s.url,
+      full_url: s.url.startsWith("http") ? s.url : `${apiBase}${s.url}`
+    });
+
+    // Populate subtitle immediately from batch
+    if (s.subtitles) {
+      setSubtitleData({ available: true, entries: s.subtitles });
+    }
+
+    // Jump to AI Video Studio / Template Step
+    setWizardStep(3);
   };
 
   const handleTrim = async () => {
@@ -395,10 +441,62 @@ export default function ClipperPage() {
             ? `Plot twist dari "${vTitle}" yang gak ada yang nyangka 🤯\n\n⏱ ${mm(trimStart)} – ${mm(trimEnd)}\n\n#plottwist #viral #shorts`
             : `Insight terbaik dari "${vTitle}" 💡\n\n⏱ ${mm(trimStart)} – ${mm(trimEnd)}\n\n#insight #edukasi #viral`,
       }));
-      setViralDescs(descs);
-      if (descs.length > 0) setUploadDesc(descs[0].description);
     } catch { /* silent */ }
     finally { setGeneratingContent(false); }
+  };
+
+  const [batchProcessing, setBatchProcessing] = useState(false);
+  const [batchProgress, setBatchProgress] = useState("");
+
+  const handleBatchRender = async (template: any) => {
+    if (suggestions.length === 0) return;
+    setBatchProcessing(true);
+    setError("");
+    setBatchProgress(`Styling ${suggestions.length} clips with ${template.name}...`);
+    try {
+      const clipIds = suggestions.map(s => s.clip_id);
+      const res = await api.post("/api/youtube/render-batch", {
+        clip_ids: clipIds,
+        template: template.config
+      });
+      const results = res.data.data.results || [];
+      // Update suggestions with new final URLs
+      setSuggestions(prev => prev.map(s => {
+        const matching = results.find((r: any) => r.id === s.clip_id);
+        if (matching && matching.status === "done") {
+          return { ...s, url: matching.url, clip_id: matching.final_id, is_styled: true };
+        }
+        return s;
+      }));
+      setBatchProgress("Semua clip berhasil di-style!");
+      setTimeout(() => setBatchProgress(""), 3000);
+    } catch (e: any) {
+      setError(extractError(e, "Gagal batch rendering."));
+    } finally { setBatchProcessing(false); }
+  };
+
+  const handleBatchUpload = async () => {
+    if (suggestions.length === 0) return;
+    if (!ytConnected) { alert("Hubungkan YouTube dulu di panel atas!"); return; }
+
+    setBatchProcessing(true);
+    setBatchProgress(`Mengupload ${suggestions.length} clips ke YouTube...`);
+    try {
+      const uploadReqs = suggestions.map((s, i) => ({
+        clip_id: s.clip_id,
+        title: `${s.label || "Clip"} - ${uploadTitle} #${i + 1}`,
+        description: uploadDesc,
+        format_type: format
+      }));
+
+      const res = await api.post("/api/youtube/upload-batch", uploadReqs);
+      const results = res.data.data.results || [];
+      const count = results.filter((r: any) => r.status === "done").length;
+      setBatchProgress(`${count} video berhasil diposting ke YouTube!`);
+      setTimeout(() => setWizardStep(6), 2000); // Go to export/success step
+    } catch (e: any) {
+      setError(extractError(e, "Gagal batch upload."));
+    } finally { setBatchProcessing(false); }
   };
 
   const generateThumbnail = async () => {
@@ -767,33 +865,114 @@ export default function ClipperPage() {
                     </div>
                     <Button className="w-full py-5 rounded-xl text-base gap-2" onClick={detectHighlights} disabled={detecting}>
                       {detecting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Zap className="h-5 w-5" />}
-                      {detecting ? "Menganalisis video..." : "⚡ Detect Highlights"}
+                      {detecting ? "Batch Processing (Top 10 Clips)..." : "⚡ AI Auto-Clip Top 10"}
                     </Button>
+
+                    {suggestions.length > 0 && (
+                      <div className="p-4 rounded-2xl border-2 border-violet-200 bg-violet-50/50 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] font-bold text-violet-700 uppercase tracking-widest flex items-center gap-2">
+                            <Sparkles className="h-3.5 w-3.5" /> Bulk Action Center
+                          </label>
+                          {batchProcessing && <Loader2 className="h-4 w-4 animate-spin text-violet-600" />}
+                        </div>
+
+                        {batchProgress && (
+                          <div className="text-[10px] bg-white border border-violet-100 rounded-lg p-2 text-violet-600 font-medium animate-pulse">
+                            ⏳ {batchProgress}
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 gap-2">
+                          {/* <div className="space-y-1.5">
+                             <p className="text-[9px] font-semibold text-gray-400 ml-1">1. APPLY STYLE TO ALL</p>
+                             <div className="flex flex-wrap gap-1">
+                               {VIRAL_TEMPLATES.map(t => (
+                                 <button key={t.id} onClick={() => handleBatchRender(t)} disabled={batchProcessing}
+                                   className="text-[10px] bg-white border border-gray-200 px-2 py-1 rounded-md hover:border-violet-400 hover:text-violet-600 shadow-sm transition-all whitespace-nowrap">
+                                   {t.name}
+                                 </button>
+                               ))}
+                             </div>
+                          </div> */}
+                          <div className="space-y-1.5 flex flex-col w-full">
+                            <p className="text-[9px] font-semibold text-gray-400 ml-1">PUBLISH ALL</p>
+                            <Button size="sm" variant="default" disabled={batchProcessing || !ytConnected} onClick={handleBatchUpload}
+                              className="w-full! mt-auto h-8 text-[10px] rounded-lg bg-red-600 hover:bg-red-700 gap-1.5">
+                              <Send className="h-3 w-3" /> Post All to Shorts
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {suggestions.length > 0 && (
                       <div className="space-y-3">
-                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-                          {suggestions.length} Highlight Ditemukan — Pilih satu untuk lanjut
-                        </p>
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                            🚀 {suggestions.length} Clips Berhasil di-Trim & Siap Diposting
+                          </p>
+                        </div>
                         {suggestions.map((s, i) => (
                           <div key={i} onClick={() => pickSuggestion(s)}
-                            className={`rounded-2xl border-2 border-l-4 bg-white p-4 cursor-pointer hover:border-violet-300 hover:shadow-md transition-all ${typeColor[s.type] || "border-l-gray-300"}`}>
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="font-semibold text-sm">{s.label || `Segment ${i + 1}`}</span>
-                              <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${viralBadge(s.viral_score ?? 0)}`}>
-                                ⚡ {s.viral_score ?? "—"}% Viral
-                              </span>
+                            className={`rounded-2xl border-2 border-l-4 bg-white p-5 cursor-pointer hover:border-violet-300 hover:shadow-lg transition-all group ${typeColor[s.type] || "border-l-gray-300"}`}>
+                            <div className="flex items-start justify-between mb-3">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-sm text-gray-900 group-hover:text-violet-700 transition-colors">
+                                    {s.label}
+                                  </span>
+                                  <span className="text-[9px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded-md border border-green-100 flex items-center gap-1 font-bold">
+                                    <Scissors className="h-2 w-2" /> Ready
+                                  </span>
+                                </div>
+                                {s.hook && (
+                                  <p className="text-[11px] italic text-gray-500 line-clamp-1">
+                                    "{s.hook}"
+                                  </p>
+                                )}
+                              </div>
+                              <div className="flex flex-col items-end gap-1">
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shadow-sm ${viralBadge(s.viral_score ?? 0)}`}>
+                                  ⚡ {s.viral_score ?? "—"}% Viral
+                                </span>
+                              </div>
                             </div>
-                            <div className="flex items-center gap-4 text-xs text-gray-500">
-                              <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{fmtSec(s.start_seconds)} – {fmtSec(s.end_seconds)}</span>
-                              <span className="flex items-center gap-1"><BarChart2 className="h-3 w-3" />{Math.round(s.end_seconds - s.start_seconds)}s</span>
+
+                            {s.reason && (
+                              <div className="mb-3 p-2 bg-gray-50 rounded-lg border border-gray-100 italic text-[11px] text-gray-600 line-clamp-2">
+                                ✨ {s.reason}
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-between mb-3 text-[10px] text-gray-500 font-medium">
+                              <div className="flex items-center gap-3">
+                                <span className="flex items-center gap-1 bg-gray-100 px-2 py-0.5 rounded-full"><Clock className="h-2.5 w-2.5" />{fmtSec(s.start_seconds)} – {fmtSec(s.end_seconds)}</span>
+                                <span className="flex items-center gap-1 bg-gray-100 px-2 py-0.5 rounded-full"><BarChart2 className="h-2.5 w-2.5" />{Math.round(s.end_seconds - s.start_seconds)}s</span>
+                                {s.subtitles && <span className="flex items-center gap-1 bg-violet-50 text-violet-600 px-2 py-0.5 rounded-full font-bold">CC Active</span>}
+                              </div>
+                              {s.vectors && (
+                                <div className="flex gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                                  {Object.entries(s.vectors).map(([k, v]: [string, any]) => (
+                                    <div key={k} className="flex flex-col items-center">
+                                      <div className="w-1 h-3 bg-gray-200 rounded-full relative overflow-hidden">
+                                        <div className="absolute bottom-0 w-full bg-violet-500" style={{ height: `${(v as number) * 10}%` }} />
+                                      </div>
+                                      <span className="text-[7px] uppercase mt-0.5">{k[0]}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
-                            <div className="mt-3 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                              <div className={`h-full rounded-full transition-all ${(s.viral_score ?? 0) >= 75 ? "bg-green-500" : (s.viral_score ?? 0) >= 50 ? "bg-orange-400" : "bg-gray-400"}`}
+
+                            <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden mb-3">
+                              <div className={`h-full rounded-full transition-all ${(s.viral_score ?? 0) >= 75 ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" : (s.viral_score ?? 0) >= 50 ? "bg-orange-400" : "bg-gray-400"}`}
                                 style={{ width: `${s.viral_score ?? 0}%` }} />
                             </div>
-                            <div className="mt-2 flex justify-end">
-                              <Button size="sm" className="rounded-full text-xs h-7 gap-1">
-                                Pilih Clip Ini <ChevronRight className="h-3 w-3" />
+
+                            <div className="flex justify-end">
+                              <Button size="sm" className="rounded-full text-[10px] h-7 px-4 gap-1.5 shadow-sm hover:translate-x-1 transition-transform bg-violet-600">
+                                🎨 Style & Publish <ChevronRight className="h-3 w-3" />
                               </Button>
                             </div>
                           </div>
@@ -1058,10 +1237,10 @@ export default function ClipperPage() {
                                     &ldquo;{r.subtitle_text.length > 100 ? r.subtitle_text.slice(0, 100) + "…" : r.subtitle_text}&rdquo;
                                   </p>
                                   <span className={`shrink-0 text-xs font-bold px-2 py-0.5 rounded-full border ${r.viral_score >= 75
-                                      ? "bg-green-100 text-green-700 border-green-300"
-                                      : r.viral_score >= 45
-                                        ? "bg-orange-100 text-orange-700 border-orange-300"
-                                        : "bg-gray-100 text-gray-500 border-gray-300"
+                                    ? "bg-green-100 text-green-700 border-green-300"
+                                    : r.viral_score >= 45
+                                      ? "bg-orange-100 text-orange-700 border-orange-300"
+                                      : "bg-gray-100 text-gray-500 border-gray-300"
                                     }`}>
                                     ⚡ {r.viral_score}
                                   </span>

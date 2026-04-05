@@ -16,6 +16,12 @@ from typing import Optional
 from pathlib import Path
 from urllib.parse import urlparse
 
+# Global imports with graceful fallback for "minim budget" environments
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None
+
 _UUID_RE = re.compile(
     r'^dl_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
 )
@@ -54,11 +60,24 @@ class TrimRequest(BaseModel):
 class DownloadRequest(BaseModel):
     url: str
 
+class RenderRequest(BaseModel):
+    clip_id: str
+    template: dict
+
+class RenderBatchRequest(BaseModel):
+    clip_ids: list[str]
+    template: dict
+
 class UploadClipRequest(BaseModel):
     clip_id: str
     title: str
     description: Optional[str] = None
     format_type: str = "regular"
+
+class BatchProcessRequest(BaseModel):
+    format_type: str = "short"
+    samples: int = 10
+
 
 @router.get("/status")
 async def youtube_status(request: Request):
@@ -364,15 +383,13 @@ class TemplateConfigModel(BaseModel):
     uppercase: bool = True
     entries: list[SubtitleEntry] = []
 
-class RenderRequest(BaseModel):
-    clip_id: str
-    template: TemplateConfigModel
-
 @router.post("/transcribe-clip/{clip_id}")
 async def api_transcribe_clip_ai(clip_id: str):
-    import google.generativeai as genai
     import json
     
+    if genai is None:
+        raise HTTPException(status_code=400, detail="Metode AI Transcribe tidak tersedia karena library google-generativeai belum diinstal. Harap gunakan transkrip lokal atau instal dependensi.")
+
     input_path = CLIPS_DIR / f"{clip_id}.mp4"
     if not input_path.exists():
         raise HTTPException(status_code=404, detail="Original clip tidak ditemukan")
@@ -428,7 +445,7 @@ async def api_render_template(req: RenderRequest, request: Request):
             render_video_with_template,
             input_video=str(input_path),
             output_video=str(output_path),
-            template_config=req.template.dict()
+            template_config=req.template
         )
         
         clip_path = f"/api/jobs/clips/{final_clip_id}.mp4"
@@ -443,6 +460,66 @@ async def api_render_template(req: RenderRequest, request: Request):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal merender template: {str(e)}")
+
+@router.post("/render-batch")
+async def api_render_batch(req: RenderBatchRequest, request: Request):
+    """Render multiple clips with the SAME template styling in one operation."""
+    sem = asyncio.Semaphore(4) # Limit parallel FFmpeg renders to 4 to avoid CPU melt
+    
+    async def _render_one(cid: str):
+        async with sem:
+            input_path = CLIPS_DIR / f"{cid}.mp4"
+            if not input_path.exists(): return {"id": cid, "status": "error", "reason": "Clip not found"}
+            
+            final_id = f"final_{cid}"
+            output_p = CLIPS_DIR / f"{final_id}.mp4"
+            
+            try:
+                await asyncio.to_thread(
+                    render_video_with_template,
+                    input_video=str(input_path),
+                    output_video=str(output_p),
+                    template_config=req.template
+                )
+                return {"id": cid, "final_id": final_id, "status": "done", "url": f"/api/jobs/clips/{final_id}.mp4"}
+            except Exception as e:
+                return {"id": cid, "status": "error", "reason": str(e)}
+
+    results = await asyncio.gather(*[_render_one(cid) for cid in req.clip_ids])
+    return response_success(data={"results": results}, message=f"{len([r for r in results if r['status'] == 'done'])} clips rendered successfully!")
+
+@router.post("/upload-batch")
+async def api_upload_batch(req: list[UploadClipRequest], request: Request):
+    """Upload multiple clips sequentially to YouTube Shorts/Video."""
+    sid = request.cookies.get("sid")
+    if not sid: raise HTTPException(status_code=401, detail="Harap login YouTube terlebih dahulu")
+    
+    results = []
+    # Sequentially to avoid YouTube quota/rate-limit issues
+    for up_req in req:
+        # Check if it's a final_xxx clip or normal
+        cid = up_req.clip_id
+        input_path = CLIPS_DIR / f"{cid}.mp4"
+        if not input_path.exists():
+            results.append({"id": cid, "status": "error", "reason": "Clip file missing"})
+            continue
+            
+        try:
+            # Re-implement a small piece of _youtube_upload logic or call it
+            # For simplicity, we trigger the existing task system or do it directly
+            res_id = await asyncio.to_thread(
+                _youtube_upload,
+                sid=sid,
+                file_path=str(input_path),
+                title=up_req.title,
+                description=up_req.description or "Automatically uploaded by ClipFIX AI",
+                format_type=up_req.format_type
+            )
+            results.append({"id": cid, "status": "done", "video_id": res_id})
+        except Exception as e:
+            results.append({"id": cid, "status": "error", "reason": str(e)})
+
+    return response_success(data={"results": results}, message=f"{len([r for r in results if r['status'] == 'done'])} clips uploaded!")
 
 @router.get("/suggest/{task_id}")
 async def api_youtube_suggest(task_id: str, format_type: str = "short"):
@@ -459,6 +536,7 @@ async def api_youtube_suggest(task_id: str, format_type: str = "short"):
             duration = float(container.duration / av.time_base) if container.duration else 0.0
 
         target = 60.0 if format_type == "short" else 600.0
+        # Get baseline highlights from audio energy
         suggestions = await asyncio.to_thread(
             suggest_segments_from_file,
             input_path=input_path,
@@ -467,13 +545,14 @@ async def api_youtube_suggest(task_id: str, format_type: str = "short"):
         )
 
         try:
-            # Cari subtitle file berdasarkan prefix task_id, bukan stem 'merged'
+            # Look for subtitle files
             sub_exts = [".vtt", ".srt"]
             sub_entries = []
             for ext in sub_exts:
                 for candidate in DOWNLOADS_DIR.glob(f"dl_{task_id}_*{ext}"):
                     if candidate.exists():
                         content = candidate.read_text(encoding="utf-8", errors="ignore")
+                        # _parse_vtt is actually a bit permissive and works for basic SRT too
                         sub_entries = _parse_vtt(content, 0.0, duration or 99999.0)
                         break
                 if sub_entries:
@@ -483,24 +562,30 @@ async def api_youtube_suggest(task_id: str, format_type: str = "short"):
                 for seg in suggestions:
                     st = seg["start_seconds"]
                     en = seg["end_seconds"]
-                    texts = [e["text"] for e in sub_entries if e["end"] >= st and e["start"] <= en]
+                    # Extract text for this segment
+                    texts = [e["text"] for e in sub_entries if (e["end"] >= st and e["start"] <= en)]
                     full_text = " ".join(texts).strip()
+                    
                     if full_text:
+                        # Elite Scoring
                         score_data = _score_viral_moment(full_text, st, en)
-                        seg["viral_score"] = max(seg.get("viral_score", 0), score_data["viral_score"]) # take the best of both audio & text
+                        seg["viral_score"] = score_data["viral_score"]
                         seg["type"] = score_data["type"]
                         seg["reason"] = score_data["reason"]
-                        if "keywords_detected" in score_data:
-                            seg["keywords_detected"] = score_data["keywords_detected"]
+                        seg["vectors"] = score_data.get("vectors")
+                        seg["hook"] = score_data.get("hook_text")
+                        seg["subtitle_text"] = full_text
                 
-                # Re-sort heavily boosting text-based viral score segments
+                # Sort by Elite Viral Score
                 suggestions.sort(key=lambda x: x.get("viral_score", 0), reverse=True)
+                # Ensure we return top 10 if available
+                suggestions = suggestions[:10]
         except Exception as sub_e:
-            print("Error parsing subtitles for suggest:", sub_e)
+            print("Error parsing subtitles for elite suggest:", sub_e)
 
         return response_success(
             data={"suggestions": suggestions, "duration": duration},
-            message="Saran segment berhasil dibuat",
+            message="Saran segment Elite berhasil dibuat",
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal membuat saran: {str(e)}")
@@ -508,7 +593,6 @@ async def api_youtube_suggest(task_id: str, format_type: str = "short"):
 
 # ─── Viral Title Generator ────────────────────────────────────────────────────
 
-import google.generativeai as genai
 import json
 
 def _generate_viral_titles_ai(video_title: str, format_type: str, context_text: str = "") -> list[dict]:
@@ -521,8 +605,8 @@ def _generate_viral_titles_ai(video_title: str, format_type: str, context_text: 
     ]
     
     api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print("GEMINI_API_KEY tidak ditemukan, menggunakan fallback auto hook.")
+    if not api_key or genai is None:
+        print("GEMINI_API_KEY tidak ditemukan atau library tidak terinstal, menggunakan fallback auto hook.")
         return default_titles
 
     try:
@@ -880,138 +964,116 @@ async def get_subtitles(task_id: str, start: float = 0.0, end: float = 9999.0):
 
 # ─── Viral Moment Detector ────────────────────────────────────────────────────
 
-# Keyword banks with per-word weight contributions (Indonesian + English)
-_VIRAL_KEYWORDS: dict[str, tuple[int, str]] = {
-    # --- HIGH IMPACT (emotion / shock) ---
-    "gila":           (18, "emotion"),
-    "parah":          (16, "emotion"),
-    "gokil":          (16, "emotion"),
-    "gilak":          (15, "emotion"),
-    "serius":         (12, "emotion"),
-    "serius?":        (12, "emotion"),
-    "shocking":       (18, "emotion"),
-    "syok":           (15, "emotion"),
-    "kaget":          (14, "emotion"),
-    "nangis":         (14, "emotion"),
-    "ngerasa":        (10, "emotion"),
-    "sedih":          (10, "emotion"),
-    "marah":          (10, "emotion"),
-    "kesel":          (10, "emotion"),
-    "takut":          (10, "emotion"),
-    "ngeri":          (12, "emotion"),
-    "OMG":            (16, "emotion"),
-    "omg":            (16, "emotion"),
-    "wow":            (13, "emotion"),
-    "WOW":            (13, "emotion"),
-    "astaga":         (13, "emotion"),
-    "gak nyangka":    (18, "emotion"),
-    "tidak nyangka":  (18, "emotion"),
-    "tidak disangka": (18, "emotion"),
-    "impossible":     (15, "emotion"),
-    "unbelievable":   (16, "emotion"),
-    "bohong":         (12, "emotion"),
-    "dusta":          (10, "emotion"),
-    "speechless":     (15, "emotion"),
-    # --- HOOK / ATTENTION GRABBERS ---
-    "rahasia":            (18, "hook"),
-    "secret":             (18, "hook"),
-    "terungkap":          (18, "hook"),
-    "finally revealed":   (18, "hook"),
-    "revealed":           (14, "hook"),
-    "ternyata":           (16, "hook"),
-    "you won't believe":  (20, "hook"),
-    "wait for it":        (16, "hook"),
-    "plot twist":         (20, "hook"),
-    "twist":              (14, "hook"),
-    "ending":             (10, "hook"),
-    "spoiler":            (10, "hook"),
-    "eksklusif":          (14, "hook"),
-    "exclusive":          (14, "hook"),
-    "breaking":           (14, "hook"),
-    "breaking news":      (18, "hook"),
-    "terbaru":            (10, "hook"),
-    "pertama kali":       (14, "hook"),
-    "first time":         (14, "hook"),
-    "viral":              (12, "hook"),
-    "trending":           (12, "hook"),
-    "bocoran":            (16, "hook"),
-    "leaked":             (14, "hook"),
-    "jangan bagikan":     (16, "hook"),
-    "don't share":        (16, "hook"),
-    # --- INSIGHT / VALUE ---
-    "fakta":          (12, "insight"),
-    "fact":           (12, "insight"),
-    "tips":           (12, "insight"),
-    "trik":           (12, "insight"),
-    "trick":          (12, "insight"),
-    "cara":           ( 8, "insight"),
-    "bagaimana":      ( 6, "insight"),
-    "how to":         (10, "insight"),
-    "tutorial":       (10, "insight"),
-    "penting":        (12, "insight"),
-    "important":      (12, "insight"),
-    "wajib tau":      (16, "insight"),
-    "must know":      (16, "insight"),
-    "terbukti":       (12, "insight"),
-    "proven":         (12, "insight"),
-    "riset":          (10, "insight"),
-    "penelitian":     (10, "insight"),
-    "studi":          (10, "insight"),
-    "study":          (10, "insight"),
-    "data":           ( 8, "insight"),
-    "bukti":          (10, "insight"),
-    "evidence":       (10, "insight"),
-    "solusi":         (10, "insight"),
-    "solution":       (10, "insight"),
-    "strategi":       (10, "insight"),
-    "strategy":       (10, "insight"),
-    "rumus":          (10, "insight"),
-    # --- PUNCHLINE / CLIMAX ---
-    "pada akhirnya":  (12, "punchline"),
-    "intinya":        (12, "punchline"),
-    "kesimpulannya":  (12, "punchline"),
-    "jadi":           ( 6, "punchline"),
-    "akhirnya":       (12, "punchline"),
-    "at the end":     (12, "punchline"),
-    "turns out":      (14, "punchline"),
-    "the truth is":   (14, "punchline"),
-    "kenyataannya":   (14, "punchline"),
-    "sebenernya":     (12, "punchline"),
-    "sebenarnya":     (12, "punchline"),
-    "actually":       (10, "punchline"),
-    "hasilnya":       (10, "punchline"),
-    "result":         ( 8, "punchline"),
-    # --- CTA (Call to Action) ---
-    "subscribe":      (12, "cta"),
-    "like":           ( 8, "cta"),
-    "komen":          ( 8, "cta"),
-    "comment":        ( 8, "cta"),
-    "share":          ( 8, "cta"),
-    "follow":         ( 8, "cta"),
-    "klik":           ( 6, "cta"),
-    "click":          ( 6, "cta"),
-    "tonton":         ( 6, "cta"),
-    "watch":          ( 6, "cta"),
-    "jangan lupa":    (10, "cta"),
-    "don't forget":   (10, "cta"),
-    "link di bio":    (10, "cta"),
-    "link in bio":    (10, "cta"),
-    "swipe up":       (10, "cta"),
-    "kunjungi":       ( 6, "cta"),
-    "visit":          ( 6, "cta"),
-    "daftarkan":      ( 8, "cta"),
-    "register":       ( 8, "cta"),
+_VIRAL_DNA: dict[str, tuple[tuple[int, int, int, int], str]] = {
+    "rahasia":           ((10, 9, 3, 7), "insight"),
+    "secret":            ((10, 9, 3, 7), "insight"),
+    "terungkap":         ((9, 10, 5, 8), "insight"),
+    "revealed":          ((9, 10, 5, 8), "insight"),
+    "ternyata":          ((10, 8, 4, 6), "hook"),
+    "you won't believe": ((10, 9, 7, 9), "hook"),
+    "wait for it":       ((10, 8, 6, 8), "hook"),
+    "plot twist":        ((9, 10, 8, 10), "punchline"),
+    "shocking":          ((9, 7, 10, 9), "emotion"),
+    "syok":              ((9, 7, 10, 9), "emotion"),
+    "kaget":             ((8, 6, 10, 8), "emotion"),
+    "OMG":               ((9, 5, 10, 9), "emotion"),
+    "rahasia terbesar":  ((10, 10, 6, 9), "insight"),
+    "jangan skip":       ((10, 5, 3, 5), "hook"),
+    "ini alasannya":     ((9, 8, 4, 6), "insight"),
+    "gila":              ((6, 7, 10, 8), "emotion"),
+    "parah":             ((6, 7, 10, 8), "emotion"),
+    "nangis":            ((4, 5, 10, 9), "emotion"),
+    "sedih":             ((3, 4, 9, 7), "emotion"),
+    "marah":             ((5, 5, 9, 6), "emotion"),
+    "speechless":        ((8, 8, 10, 9), "emotion"),
+    "merinding":         ((9, 8, 10, 10), "emotion"),
+    "fakta":             ((7, 8, 4, 6), "insight"),
+    "tips":              ((8, 8, 3, 7), "insight"),
+    "trik":              ((8, 8, 3, 7), "insight"),
+    "wajib tau":         ((10, 8, 4, 8), "insight"),
+    "must know":         ((10, 8, 4, 8), "insight"),
+    "akhirnya":          ((5, 7, 8, 7), "punchline"),
+    "turns out":         ((8, 9, 6, 8), "punchline"),
+    "bayangkan":         ((9, 8, 7, 7), "hook"),
+    "imagine":           ((9, 8, 7, 7), "hook"),
 }
 
-# Punctuation patterns that signal intensity / climax
-_INTENSITY_PATTERNS = [
-    (r"[!]{2,}", 8),          # Multiple exclamation marks
-    (r"[?!]{2,}", 8),         # Mixed ?? or !?
-    (r"\b[A-Z]{3,}\b", 6),   # All-caps word (e.g. WOW, OMG, GILA)
-    (r"😱|🤯|😭|🔥|💥|⚡|❗|🚨", 8), # High-energy emojis
-    (r"😂|😆|🤣|😹", 5),      # Humor emojis
-    (r"\.{3,}", 3),            # Ellipsis → suspense
+_HOOK_STARTERS = [
+    "tahukah kamu", "did you know", "bayangkan jika", "imagine if",
+    "ini rahasia", "this is the secret", "pernah kepikiran", "ever wondered",
+    "berhenti melakukan", "stop doing", "jangan pernah", "never ever",
+    "alasan kenapa", "the reason why", "cara tercepat", "fastest way",
+    "sebenarnya", "actually", "ada satu hal", "there's one thing"
 ]
+
+def _score_viral_moment(subtitle_text: str, start_time: float, end_time: float) -> dict:
+    """
+    Elite Pure-Python Viral Scorer (Zero Dependency).
+    Evaluation vectors: Hook, Curiosity, Emotion, Shareability.
+    """
+    import re as _re
+
+    text = subtitle_text.strip()
+    if not text:
+        return {"viral_score": 0, "type": "hook", "reason": "No text."}
+
+    text_lower = text.lower()
+
+    # Vector scores (0-10)
+    v_hook, v_curiosity, v_emotion, v_shareability = 0, 0, 0, 0
+    detected_types = []
+
+    # 1. DNA Keyword Scoring (Vector weights)
+    for kw, ((h, c, e, s), t) in _VIRAL_DNA.items():
+        if kw in text_lower:
+            v_hook = max(v_hook, h)
+            v_curiosity = max(v_curiosity, c)
+            v_emotion = max(v_emotion, e)
+            v_shareability = max(v_shareability, s)
+            detected_types.append(t)
+
+    # 2. Curiosity (Question and intrigue markers)
+    questions_count = text.count("?")
+    intrigue_markers = ["kenapa", "bagaimana", "rahasia", "misteri", "ternyata", "how", "why", "secret"]
+    v_curiosity = min(10, v_curiosity + questions_count * 3 + sum(2 for m in intrigue_markers if m in text_lower))
+
+    # 3. Hook Strength (Start of segment)
+    # Check for hook starters
+    clean_start = text_lower[:100].split('.')[0]
+    for starter in _HOOK_STARTERS:
+        if clean_start.startswith(starter):
+            v_hook = min(10, v_hook + 6)
+            detected_types.append("hook")
+            break
+
+    # 4. Emotion & Shareability (Intensity markers)
+    bangs_count = text.count("!")
+    caps_count = len(_re.findall(r"\b[A-Z]{3,}\b", text))
+    v_emotion = min(10, v_emotion + round(bangs_count * 0.5) + round(caps_count * 0.5))
+    v_shareability = min(10, v_shareability + round(v_hook * 0.3) + round(v_emotion * 0.3))
+
+    # 5. Final Aggregation
+    # Weighting: Hook(40%), Curiosity(25%), Emotion(20%), Shareability(15%)
+    raw_score = (v_hook * 0.40) + (v_curiosity * 0.25) + (v_emotion * 0.20) + (v_shareability * 0.15)
+    total_score = round(raw_score * 10)
+    
+    # Summary & Reason
+    reasons = []
+    if v_hook >= 8: reasons.append("Hook pembuka sangat kuat")
+    if v_curiosity >= 8: reasons.append("Terdapat elemen penasaran/intrigue")
+    if v_emotion >= 8: reasons.append("Muatan emosional/intensitas tinggi")
+    if v_shareability >= 8: reasons.append("Konten sangat shareable")
+    
+    reason = " | ".join(reasons) if reasons else "Segment ini memiliki alur informasi yang baik."
+    dom_type = max(set(detected_types), key=detected_types.count) if detected_types else "insight"
+
+    return {
+        "viral_score": total_score,
+        "type": dom_type,
+        "reason": reason,
+        "vectors": {"hook": v_hook, "curiosity": v_curiosity, "emotion": v_emotion, "shareability": v_shareability},
+        "hook_text": text.split(".")[0][:80] + "..." if len(text.split(".")[0]) > 80 else text.split(".")[0]
+    }
 
 
 class ViralScoreRequest(BaseModel):
@@ -1022,99 +1084,6 @@ class ViralScoreRequest(BaseModel):
 
 class ViralScoreBatchRequest(BaseModel):
     segments: list[ViralScoreRequest]
-
-
-def _score_viral_moment(subtitle_text: str, start_time: float, end_time: float) -> dict:
-    """
-    Rule-based viral moment scorer.
-
-    Returns a dict matching the prompt spec:
-      viral_score (0-100), type, keywords_detected, reason
-    """
-    import re as _re
-
-    text = subtitle_text.strip()
-    text_lower = text.lower()
-
-    if not text:
-        return {
-            "viral_score": 0,
-            "type": "hook",
-            "keywords_detected": [],
-            "reason": "Segment kosong / tidak ada teks untuk dianalisis.",
-        }
-
-    raw_score = 0
-    detected_keywords: list[str] = []
-    type_votes: dict[str, int] = {
-        "emotion": 0, "hook": 0, "insight": 0, "punchline": 0, "cta": 0
-    }
-
-    # ── 1. Keyword matching ──────────────────────────────────────────────────
-    for kw, (weight, kw_type) in _VIRAL_KEYWORDS.items():
-        if kw.lower() in text_lower:
-            raw_score += weight
-            type_votes[kw_type] += weight
-            detected_keywords.append(kw)
-
-    # ── 2. Intensity / punctuation patterns ─────────────────────────────────
-    pattern_bonuses = 0
-    for pattern, bonus in _INTENSITY_PATTERNS:
-        if _re.search(pattern, text):
-            pattern_bonuses += bonus
-    raw_score += pattern_bonuses
-
-    # ── 3. Duration factor: very short segments (<3 s) are penalised ────────
-    duration = max(0.0, end_time - start_time)
-    if duration < 3.0:
-        raw_score = max(0, raw_score - 10)
-
-    # ── 4. Length factor: extremely short texts (< 5 words) get penalty ────
-    word_count = len(text.split())
-    if word_count < 5:
-        raw_score = max(0, raw_score - 8)
-
-    # ── 5. Cap at 100 ───────────────────────────────────────────────────────
-    viral_score = min(100, max(0, raw_score))
-
-    # ── 6. Determine dominant type ──────────────────────────────────────────
-    if any(v > 0 for v in type_votes.values()):
-        dominant_type = max(type_votes, key=lambda t: type_votes[t])
-    else:
-        dominant_type = "hook"
-
-    # ── 7. Build reason string ──────────────────────────────────────────────
-    if viral_score >= 75:
-        reason = (
-            f"Segment ini sangat viral ({viral_score}/100). "
-            f"Mengandung kata kunci high-impact: {', '.join(detected_keywords[:5])}. "
-            f"Dominan tipe '{dominant_type}'."
-        )
-    elif viral_score >= 45:
-        reason = (
-            f"Potensi viral sedang ({viral_score}/100). "
-            f"Terdapat beberapa elemen menarik: {', '.join(detected_keywords[:3]) or 'pola tanda baca'}. "
-            f"Bisa dikembangkan lebih lanjut."
-        )
-    elif viral_score >= 20:
-        reason = (
-            f"Potensi viral rendah ({viral_score}/100). "
-            + (f"Kata kunci lemah terdeteksi: {', '.join(detected_keywords)}. " if detected_keywords else "Tidak ada kata kunci kuat. ")
-            + "Konten terkesan generik atau percakapan biasa."
-        )
-    else:
-        reason = (
-            f"Bukan momen viral ({viral_score}/100). "
-            "Tidak ada kata kunci high-impact, emosi, atau hook yang terdeteksi. "
-            "Kemungkinan filler atau percakapan biasa."
-        )
-
-    return {
-        "viral_score": viral_score,
-        "type": dominant_type,
-        "keywords_detected": detected_keywords,
-        "reason": reason,
-    }
 
 
 @router.post("/viral-score")
@@ -1175,3 +1144,140 @@ async def api_viral_score_batch(req: ViralScoreBatchRequest):
         data={"results": scored_sorted, "total": len(scored_sorted)},
         message="Batch viral score berhasil dihitung",
     )
+@router.post("/batch-process/{task_id}")
+async def api_youtube_batch_process(task_id: str, req: BatchProcessRequest):
+    """
+    AI Batch Mode: Automatically detects top N highlights, trims them into clips,
+    and extracts subtitles for all of them in one operation.
+    """
+    task = _recover_task(task_id)
+    if not task or task.get("status") != "done":
+        # Final attempt: direct path check if task in memory is missing
+        candidate = DOWNLOADS_DIR / f"dl_{task_id}_merged.mp4"
+        if not candidate.exists():
+            candidates = list(DOWNLOADS_DIR.glob(f"dl_{task_id}_*.mp4"))
+            if candidates: candidate = candidates[0]
+        
+        if candidate.exists():
+            task = {"status": "done", "file_path": str(candidate)}
+        else:
+            raise HTTPException(status_code=400, detail=f"Video dengan ID {task_id} tidak ditemukan atau belum selesai didownload.")
+
+    input_path = Path(task["file_path"])
+    video_title = task.get("video_title", "Viral Clip").replace(".mp4", "")
+    
+    # Resilient path check: if the absolute path fails, try relative to current DOWNLOADS_DIR
+    if not input_path.exists():
+        fallback_path = DOWNLOADS_DIR / input_path.name
+        if fallback_path.exists():
+            input_path = fallback_path
+        else:
+            raise HTTPException(status_code=404, detail=f"File media tidak ditemukan di server: {input_path.name}")
+
+    format_type = req.format_type
+    samples = req.samples
+
+    try:
+        with av.open(str(input_path)) as container:
+            duration = float(container.duration / av.time_base) if container.duration else 0.0
+
+        # 1. Get Top Suggestions
+        target = 60.0 if format_type == "short" else 600.0
+        suggestions = await asyncio.to_thread(
+            suggest_segments_from_file,
+            input_path=input_path,
+            target_seconds=target,
+            format_type=format_type,
+        )
+
+        # 2. Enrich and Sort by Elite Scoring if Subs exist
+        sub_exts = [".vtt", ".srt"]
+        sub_content = ""
+        sub_entries_raw = []
+        for ext in sub_exts:
+            for candidate in DOWNLOADS_DIR.glob(f"dl_{task_id}_*{ext}"):
+                if candidate.exists():
+                    sub_content = candidate.read_text(encoding="utf-8", errors="ignore")
+                    sub_entries_raw = _parse_vtt(sub_content, 0.0, duration or 99999.0)
+                    break
+            if sub_entries_raw:
+                break
+        
+        if sub_entries_raw:
+            for seg in suggestions:
+                st = seg["start_seconds"]
+                en = seg["end_seconds"]
+                texts = [e["text"] for e in sub_entries_raw if (e["end"] >= st and e["start"] <= en)]
+                full_text = " ".join(texts).strip()
+                if full_text:
+                    score_data = _score_viral_moment(full_text, st, en)
+                    seg["viral_score"] = score_data["viral_score"]
+                    seg["type"] = score_data["type"]
+                    seg["reason"] = score_data["reason"]
+                    seg["subtitle_text"] = full_text
+            
+            suggestions.sort(key=lambda x: x.get("viral_score", 0), reverse=True)
+        
+        top_suggestions = suggestions[:samples]
+        
+        processed_clips = []
+
+        # 3. Batch Trim in semi-parallel (semaphore to avoid CPU melt)
+        sem = asyncio.Semaphore(5) # At most 5 parallel trims
+
+        async def _trim_one(seg: dict, idx: int):
+            async with sem:
+                clip_id = str(uuid.uuid4())
+                output_path = CLIPS_DIR / f"{clip_id}.mp4"
+                st = seg["start_seconds"]
+                en = seg["end_seconds"]
+                
+                await asyncio.to_thread(
+                    pyav_trim,
+                    input_path=input_path,
+                    output_path=output_path,
+                    start_seconds=st,
+                    end_seconds=en,
+                    format_type=format_type
+                )
+                
+                # Extract specific items for the clip's template
+                # Adjust time for subtitle relative to 0
+                clip_subs = [
+                    {"start": round(e["start"] - st, 2), "end": round(e["end"] - st, 2), "text": e["text"]}
+                    for e in sub_entries_raw if (e["start"] >= st and e["end"] <= en)
+                ]
+
+                # Generate Auto Title (Hook + Video Title)
+                hook_raw = seg.get("subtitle_text", "").strip()
+                # Find first sentence or first 45 chars
+                hook_title = hook_raw.split(".")[0].split("?")[0].split("!")[0][:50].strip()
+                if not hook_title: hook_title = f"Moment #{idx+1}"
+                
+                # Combine into a viral label: "HOOK! | Original Title"
+                # If original title is too long, truncate it
+                trunc_video = (video_title[:30] + "...") if len(video_title) > 30 else video_title
+                label = f"{hook_title.upper()}! 🔥 | {trunc_video}"
+
+                return {
+                    "id": clip_id,
+                    "label": label,
+                    "start": st,
+                    "end": en,
+                    "score": seg.get("viral_score", 0),
+                    "type": seg.get("type", "insight"),
+                    "reason": seg.get("reason", "Momen viral otomatis"),
+                    "subtitle_text": seg.get("subtitle_text", ""),
+                    "subtitles": clip_subs,
+                    "url": f"/api/jobs/clips/{clip_id}.mp4"
+                }
+
+        results = await asyncio.gather(*[_trim_one(s, i) for i, s in enumerate(top_suggestions)])
+        
+        return response_success(
+            data={"clips": results, "total": len(results)},
+            message=f"{len(results)} viral clips generated automatically!"
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Batch process failed: {str(e)}")

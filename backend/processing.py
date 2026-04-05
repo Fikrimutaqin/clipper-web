@@ -378,10 +378,10 @@ def _encode_short_trim(
         out_v.width = orig_w
         out_v.height = orig_h
 
-    # ultrafast = fastest encode, acceptable quality for social clips
+    # superfast = great balance of speed and HD quality
     out_v.options = {
-        "preset": "ultrafast",
-        "crf": "20",
+        "preset": "superfast",
+        "crf": "18",  # Near lossless (16-18)
         "tune": "zerolatency",
         "threads": "0",  # auto thread count
     }
@@ -402,7 +402,8 @@ def _encode_short_trim(
     sink = graph.add("buffersink")
     if needs_crop:
         crop = graph.add("crop", "ih*9/16:ih")
-        scale = graph.add("scale", "1080:1920:flags=bilinear")  # bilinear faster than lanczos
+        # lanczos = sharpest scale quality for HD
+        scale = graph.add("scale", "1080:1920:flags=lanczos")
         buf.link_to(crop)
         crop.link_to(scale)
         scale.link_to(sink)
@@ -608,8 +609,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             "-i", str(input_video),
             "-vf", f"ass='{ass_path}':fontsdir='{font_dir}'",
             "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "23",
+            "-preset", "superfast",
+            "-crf", "18",
             "-c:a", "copy",
             str(output_video)
         ]

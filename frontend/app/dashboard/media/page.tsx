@@ -148,6 +148,10 @@ export default function MediaPage() {
     router.push(`/dashboard/clipper?clip_export=${clipId}&filename=${encodeURIComponent(filename)}&url=${encodeURIComponent(url)}`);
   };
 
+  const handleEditStyle = (clipId: string, filename: string, url: string) => {
+    router.push(`/dashboard/clipper?edit_style=${clipId}&filename=${encodeURIComponent(filename)}&url=${encodeURIComponent(url)}`);
+  };
+
   return (
 
 
@@ -448,15 +452,23 @@ export default function MediaPage() {
 
                   {/* Actions */}
                   <div className="flex flex-col gap-2 pt-1">
-                    {ytConnected && (
+                    <div className="flex flex-row gap-2 items-center">
                       <Button
-                        className="w-full rounded-xl text-sm bg-[#FF0000] hover:bg-[#CC0000] text-white border-0"
-                        onClick={() => handlePostToPlatform(item.clip_id, item.filename, item.full_url)}
+                        className="w-full rounded-xl text-sm bg-violet-600 hover:bg-violet-700 text-white border-0"
+                        onClick={() => handleEditStyle(item.clip_id, item.filename, item.full_url)}
                       >
-                        📤 Post to Platform
+                        🎨 Edit Subtitle
                       </Button>
-                    )}
-                    
+                      {ytConnected && (
+                        <Button
+                          className="w-full rounded-xl text-sm bg-[#FF0000] hover:bg-[#CC0000] text-white border-0"
+                          onClick={() => handlePostToPlatform(item.clip_id, item.filename, item.full_url)}
+                        >
+                          📤 Post to Platform
+                        </Button>
+                      )}
+                    </div>
+
                     <div className="flex gap-2">
                       <Button
                         variant="outline"

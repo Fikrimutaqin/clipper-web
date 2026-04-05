@@ -39,7 +39,7 @@ def _download_youtube_task(task_id: str, url: str):
 
     url = (url or "").strip().strip("`").strip().strip('"').strip("'")
     ydl_opts = {
-        "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
+        "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
         "outtmpl": str(DOWNLOADS_DIR / f"dl_{task_id}_%(id)s.%(ext)s"),
         "progress_hooks": [progress_hook],
         "quiet": True,
